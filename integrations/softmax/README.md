@@ -304,9 +304,10 @@ python -m http.server 8090 --directory integrations/softmax/dist/replay-viewer
 # Open http://localhost:8090/#replay=game.replay
 ```
 
-See [GLOBAL_PROTOCOL.md](GLOBAL_PROTOCOL.md). Full live board spectating would
-require a separate trusted-viewer authorization contract with Softmax; it must
-not be enabled by copying the example's public omniscient stream.
+See [GLOBAL_PROTOCOL.md](GLOBAL_PROTOCOL.md). The public live stream remains
+score-only. Eliminated authenticated seats spectate the full map and cannot
+move or send chat. Active players retain fog of war; see
+[PLAYER_PROTOCOL.md](PLAYER_PROTOCOL.md).
 
 ## Build and certify
 

@@ -340,6 +340,18 @@ def test_human_ffa_uses_polyworld_for_live_orders_and_completed_replay(tmp_path,
                 page.wait_for_function("document.getElementById('mode').textContent === 'RECONNECTING'")
                 page.context.set_offline(False)
                 page.wait_for_function("document.getElementById('mode').textContent === 'PLAYER'")
+                # FFA disconnects eliminate the seat. Rejoining must show the live
+                # full board while the other seven seats continue playing.
+                native.wait_for_function("""() => {
+                  const state = JSON.parse(Module.pendingLiveSnapshot);
+                  return !state.alive[0] && state.types.flat().every(kind => kind >= 1 && kind <= 4);
+                }""")
+                before_chat = len([action for action in actions if action["type"] == "chat"])
+                key("Enter")
+                page.keyboard.type("Eliminated spectator", delay=20)
+                key("Enter")
+                assert len([action for action in actions if action["type"] == "chat"]) == before_chat
+                page.screenshot(path=str(tmp_path / "polyworld-eliminated-spectator.png"))
                 page.wait_for_function("document.getElementById('polyworld-replay').style.display === 'block'", timeout=45000)
                 replay = page.locator("#polyworld-replay").element_handle().content_frame()
                 replay.wait_for_function("typeof Module.replayTick === 'number'", timeout=60000)
@@ -360,3 +372,60 @@ def test_human_ffa_uses_polyworld_for_live_orders_and_completed_replay(tmp_path,
                 process.wait(timeout=10)
     assert not (tmp_path / "failure.json").exists()
     assert not any(token in (tmp_path / "server.log").read_text() for token in config["tokens"])
+
+
+def test_eliminated_seat_spectates_full_board_without_chat_or_orders(tmp_path):
+    """Elimination grants authenticated spectating, without leaking fog to active seats."""
+    if "GENERALS_POLYWORLD_ENGINE" not in os.environ:
+        pytest.skip("Compile polyworld_bridge.nim and set GENERALS_POLYWORLD_ENGINE")
+    config = GameConfig(tokens=["spectator", "red", "blue"],
+                        players=[{"name": name} for name in ("Human", "Red", "Blue")],
+                        seed=7, max_turns=4, turn_timeout_seconds=1)
+    artifacts = {key: (tmp_path / f"{key}.json").as_uri() for key in ("results", "replay", "failure")}
+    viewed = []
+    with TestClient(create_app(config, artifacts, engine="polyworld")) as client, ExitStack() as stack:
+        sockets = [stack.enter_context(client.websocket_connect(f"/player?slot={s}&token={token}"))
+                   for s, token in enumerate(config.tokens)]
+        public = stack.enter_context(client.websocket_connect("/global"))
+        for ws in sockets:
+            assert ws.receive_json()["type"] == "hello"
+            assert any(kind == 0 for row in ws.receive_json()["type_grid"] for kind in row)
+        sockets[0].send_json({"type": "surrender"})
+        for ws in sockets[1:]:
+            ws.send_json({"type": "action", "turn": 0, "action": PASS})
+        for turn in range(1, 4):
+            spectator = sockets[0].receive_json()
+            assert spectator["turn"] == turn and spectator["eliminated"]
+            assert all(kind in (1, 2, 3, 4) for row in spectator["type_grid"] for kind in row)
+            assert "PRIVATE_TO_BLUE" not in json.dumps(spectator)
+            viewed.append(spectator)
+            active = [ws.receive_json() for ws in sockets[1:]]
+            assert all(any(kind == 0 for row in obs["type_grid"] for kind in row) for obs in active)
+            if turn == 1:
+                for rejected in [
+                    {"type": "chat", "target": -2, "text": "ELIMINATED_PUBLIC"},
+                    {"type": "chat", "target": 1, "text": "ELIMINATED_PRIVATE"},
+                    {"type": "action", "turn": turn, "action": PASS},
+                ]:
+                    sockets[0].send_json(rejected)
+                    error = sockets[0].receive_json()
+                    assert error["type"] == "error" and error["message"] == "eliminated players cannot act"
+                sockets[1].send_json({"type": "chat", "target": 2, "text": "PRIVATE_TO_BLUE"})
+                assert client.get("/client/replay.data").status_code == 409
+            for ws in sockets[1:]:
+                ws.send_json({"type": "action", "turn": turn, "action": PASS})
+        assert sockets[0].receive_json()["type"] == "final"
+        replay = client.get("/replay.json").json()
+        assert "ELIMINATED_" not in json.dumps(replay)
+        assert "PRIVATE_TO_BLUE" not in json.dumps(replay)
+        while True:
+            update = public.receive_json()
+            if update["phase"] == "finished":
+                break
+            assert update["board"] is None
+    for observation in viewed:
+        frame = replay_frame(replay["frames"], observation["turn"])
+        assert observation["type_grid"] == frame["type_grid"]
+        assert observation["visible_owner_grid"] == frame["owner_grid"]
+        assert observation["army_grid"] == frame["army_grid"]
+    assert not (tmp_path / "failure.json").exists()
