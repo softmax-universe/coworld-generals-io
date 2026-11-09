@@ -451,7 +451,7 @@
     if (eliminated) {
       queue.length = 0; selectTile(null); sent = true; draw();
       $('play-controls').hidden = true;
-      status('You have been eliminated. Follow the scores until the match ends, then watch the full replay.');
+      status('You have been eliminated. Spectate the full map; movement and chat are disabled.');
       return;
     }
     // The deadline starts on the server, before either leg of the proxy trip.
