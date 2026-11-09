@@ -1086,7 +1086,7 @@ proc drawChat(view: View) =
           if view.liveChatTarget >= view.world.config.players:
             view.liveChatTarget = -2
   view.drawChatInput(input)
-  if view.replaying or not view.hasHuman():
+  if view.replaying or not view.hasHuman() or (view.remote and not view.humanAlive()):
     view.label(
       if view.replaying: "Replay" else: "Spectating",
       input + vec2(10, 8),
@@ -1212,7 +1212,7 @@ proc handleChat(view: View): bool =
       mouse.y >= bounds.y and mouse.y < bounds.y + bounds.h
     wasFocused = view.editor.focused
     inputs = silkyContexts.textInputs(view.sk)
-  if not view.hasHuman():
+  if not view.hasHuman() or (view.remote and not view.humanAlive()):
     view.editor.focused = false
     view.emotesOpen = false
     if overChat and window.scrollDelta.y != 0:

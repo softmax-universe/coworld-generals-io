@@ -55,8 +55,9 @@ arithmetic. Map dimensions,
 layouts and seeds differ from the former JAX generator. This release does not
 claim official map parity. Human seats and completed matches use the actual Polyworld Silky renderer
 compiled to WebAssembly. The browser transport owns authentication, deadlines
-and the action queue. It sends only that seat’s fog-filtered observation, public
-army/land totals, roster and skill snapshot to the renderer. The live renderer
+and the action queue. It sends that active seat’s fog-filtered observation, public army/land totals,
+roster and skill snapshot to the renderer. After elimination, the server
+sends the full board and the client disables movement and chat. The live renderer
 never runs a second simulation or offers replay point-of-view controls.
 The native desktop application remains available under `polyworld/`.
 Hosted variants still support two through eight seats, the same sixteen variant

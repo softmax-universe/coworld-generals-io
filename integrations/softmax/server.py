@@ -122,6 +122,17 @@ class Episode:
         return self.decorate_observation(self.match.observation(slot))
 
     def decorate_observation(self, observation: dict):
+        if observation["eliminated"]:
+            frame = self.frames[-1]
+            owner = observation["slot"] + 1
+            observation = {
+                **observation,
+                "type_grid": frame["type_grid"],
+                "owner_grid": [[0 if cell == 0 else 1 if cell == owner else 2 for cell in row]
+                               for row in frame["owner_grid"]],
+                "visible_owner_grid": frame["owner_grid"],
+                "army_grid": frame["army_grid"],
+            }
         return {
             **observation,
             "players": self.names,

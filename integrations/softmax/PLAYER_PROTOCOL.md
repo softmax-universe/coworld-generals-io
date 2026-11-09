@@ -29,7 +29,7 @@ Each observation has:
 | `my_land`, `my_army`, `opp_land`, `opp_army` | Public totals; opponents aggregate all other players |
 | `player_ratings` | Public leaderboard snapshot at match start: `{league, label, players:[{slot, score}]}`; `null` when unavailable. Scores can be negative/decimal; an unrated seat has `score:null`. Also sent in `hello` and live spectator messages. |
 | `public_scores` | Per-slot `army`, `land`, `eliminated`, `has_kill`, and `neutralize_in` arrays |
-| `eliminated` | Whether your slot is eliminated; stop sending actions and await final |
+| `eliminated` | Whether your slot is eliminated; stop sending actions/chat and spectate the full board |
 | `ruleset` | Same as handshake |
 | `visible_owner_grid` | Fog-masked absolute owners: 0 neutral/unknown, otherwise slot + 1 |
 | `build_cost_grid` | Building mode only: cost on owned plain tiles, otherwise 0 |
@@ -127,14 +127,20 @@ star ratings. Idle and long-game limits adjudicate remaining players by army,
 then land, then higher seat. Exit cleanly after receiving the final message.
 `{"type":"failure","result":null}` means the game failed to complete.
 
-No map seed, hidden board, other player's token, or opponent action is provided
-during play. The completed public replay reveals the full match. The baseline
+Active seats receive no map seed, hidden board, other player's token, or
+opponent action during play. The completed public replay reveals the full match. The baseline
 bridge in `player.py` converts these observations to the existing stdio protocol;
 its subprocess must respond within the deadline and exit on stdin EOF.
 
 The stdio bridge preserves its relative-owner format in FFA (all enemies are 2).
 Bots that need individual opponent identities or build prices should use the
-JSON protocol. No other player's hidden tiles are revealed by the added fields.
+JSON protocol. Active seats retain their fog of war.
+
+Eliminated seats receive the full ongoing board through their authenticated
+player observation and become spectators. Movement, public chat and private
+chat remain forbidden after elimination. Private inboxes remain private.
+Active seats retain fog of war; the unauthenticated global stream still reveals
+only public scores until the match ends.
 
 Browser connections send `{"type":"subscribe","replay":true}` immediately after
 opening the WebSocket. This opt-in crosses proxies without depending on URL query
