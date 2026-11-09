@@ -12,7 +12,7 @@ import
 when gameProfiles.ProfileTracePath.len > 0:
   import silky/profiles as silkyProfiles
 
-when defined(softmaxReplay) and defined(emscripten):
+when defined(emscripten):
   {.emit: "#include <emscripten.h>".}
 
 when defined(softmaxReplay):
@@ -1464,6 +1464,17 @@ proc drawHelp(view: View) =
 proc handleInput(view: View) =
   ## Converts local mouse and keyboard input into bounded human orders.
   let window = view.window
+  var wheelSteps = window.scrollDelta.y
+  when defined(emscripten):
+    var wheelPixels: cdouble
+    {.emit: """
+    `wheelPixels` = EM_ASM_DOUBLE({
+      const delta = Module.boardWheelPixels;
+      Module.boardWheelPixels = 0;
+      return delta;
+    });
+    """.}
+    wheelSteps = -wheelPixels.float32 / 100
   if window.buttonPressed[KeyF2]:
     gameProfiles.toggleProfileTrace()
   if view.screen == GameScreen and view.outcomeOpen():
@@ -1484,8 +1495,8 @@ proc handleInput(view: View) =
   let mouse = window.mousePos.vec2 / view.sk.uiScale
   let overBoard = mouse.x >= view.boardViewport.x and mouse.y >= view.boardViewport.y and
     mouse.x < view.boardViewport.x + view.boardViewport.w and mouse.y < view.boardViewport.y + view.boardViewport.h
-  if overBoard and window.scrollDelta.y != 0:
-    view.zoomAt(pow(1.15'f, window.scrollDelta.y), mouse)
+  if overBoard and wheelSteps != 0:
+    view.zoomAt(pow(1.15'f, wheelSteps), mouse)
   if window.buttonPressed[KeyEqual] or window.buttonPressed[Key0]:
     view.zoomAt(1.2, view.boardViewport.xy + view.boardViewport.wh / 2)
   if window.buttonPressed[KeyMinus] or window.buttonPressed[Key9]:
@@ -1775,6 +1786,18 @@ proc runWindow(
     gameProfiles.closeProfileViewer()
     window.onFrame = nil
     window.close()
+  when defined(emscripten):
+    # DOM wheel units are stable across operating systems; Windy normalizes
+    # its shared scroll stream differently on macOS and Linux.
+    {.emit: """
+    EM_ASM({
+      Module.boardWheelPixels = 0;
+      Module.canvas.addEventListener('wheel', event => {
+        const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? Module.canvas.clientHeight : 1;
+        Module.boardWheelPixels += event.deltaY * unit;
+      });
+    });
+    """.}
   window.makeContextCurrent()
   loadExtensions()
   let builder = newAtlasBuilder(2048, 4)
