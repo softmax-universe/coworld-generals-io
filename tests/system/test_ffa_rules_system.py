@@ -113,9 +113,9 @@ def test_idle_ffa_runs_past_old_cap_and_saved_replay_seeks_without_full_boards(t
     expect(tile).to_contain_text(str(observation_at_512["army_grid"][general[0]][general[1]]))
 
 
-@pytest.mark.parametrize("engine,seed,viewer", [("jax", 7, "jax"), ("polyworld", 1, "polyworld")], indirect=["viewer"])
+@pytest.mark.parametrize("engine,seed,viewer", [("jax", 7, "jax"), ("polyworld", 7, "polyworld")], indirect=["viewer"])
 def test_surrendered_general_stays_capturable_and_killer_outranks_later_non_killer(tmp_path, engine, seed, viewer, native_controls):
-    # Each generator's fixed map must permit this capture before neutralization.
+    # Seed 7 permits capture before neutralization with both JAX and SplitMix64 maps.
     with four_players(tmp_path, 400, engine=engine, seed=seed) as (client, sockets):
         generals = []
         attacker = victim = -1

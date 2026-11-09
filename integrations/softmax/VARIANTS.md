@@ -48,13 +48,24 @@ Plackett-Luce (mu 50, sigma 50/3); Classic and Build retain Elo. All follow the
 canonical Coworld version: a certified upload moves every league to it without
 league changes. Classic and Build use Swiss-neighbor scheduling.
 
-FFA uses `scaling_roster`, with seat rungs `[3, 4, 5, 6, 7, 8]`, eight episodes
-per round, `insufficient_players: do_not_run`, and `roster_overflow: partition`.
-`variant_rotation_by_seat_count` maps four seats to `ffa` and each other count
-to `ffa-N`. This seats the current roster without cloning entrants and partitions
-rosters above eight into separate tables. Publish the new variants before
-applying this scheduler configuration. Preserve the other stored league settings
-using a conditional replacement from `/settings/snapshot`.
+FFA uses `random_fill`, `num_episodes: 8`, `insufficient_players: do_not_run`,
+and `variant_rotation: ["ffa-8"]`. Its seed's default variant is also `ffa-8`;
+the planner derives the seat count from that default before checking rotation.
+Each episode selects eight distinct champions, balancing appearances across the
+round and shuffling seats. Fewer than eight champions waits for more entrants.
+OpenSkill, the thirty-minute cadence, and retry settings remain unchanged.
+
+The November 5, 2026 repair replaced the `scaling_roster` / `roster_overflow: sample`
+configuration, which sampled once and repeated the same lineup across all eight episodes.
+Rounds 4821–4823 each contained one distinct lineup. Preserve other stored settings
+using a conditional replacement from `/settings/snapshot`. Default-variant changes
+require paused rounds, locked submissions, and no active rounds; restore the
+previous pause and submission state after the change.
+
+Verification round `round_4d9f19e9-d679-448d-9874-62580817c38f` (4827) completed
+all eight episodes on 0.7.4 at 01:27 UTC. It used seven distinct lineups;
+all twelve eligible champions appeared five or six times. Scheduling is owned
+by the platform and did not require a game rebuild.
 
 The FFA and Build leagues were created on September 17 (20:24 UTC) by the
 Softmax team, after Matej's account was refused with HTTP 403
@@ -86,6 +97,36 @@ drains terminal messages before shutting down the game server.
 
 Ignored deployment logs, manifests, replay artifacts and exact API responses are
 kept in `local-output/release-<version>/`.
+
+### 0.7.5 — November 5, 2026 (UTC)
+
+- Release source: `0640434e8b80b6ed6a609bbdb16f72b2252fa968`, including merged
+  `46d3926cb8c686accb7ecb9c286f0d3c1e134ba6` and the capture-fixture repair in
+  [PR 34](https://app.graphite.dev/github/pr/softmax-universe/coworld-generals-io/34).
+  Full-width unsigned 64-bit seeds now use SplitMix64 maps; BASIC has the merged
+  memory/work budgets, and completed replays hold the winner screen before looping.
+- [Source CI](https://github.com/softmax-universe/coworld-generals-io/actions/runs/41948983959)
+  passed, including Linux BASIC sandbox and browser cases. Local native suites,
+  manifest checks, capture/replay, full-width seed and winner-pause browser checks passed.
+  The changed generator required seed 7 for the existing surrender capture scenario;
+  its assertions remain unchanged and reject an early-neutralization mutation.
+- [Release workflow](https://github.com/softmax-universe/coworld-generals-io/actions/runs/41950408524)
+  passed native AMD64 certification across all modes and all ten hosted checks.
+  Hosted certification completed at 01:51 UTC under `main-a863ab36887f`.
+- Canonical Coworld: `cow_cba82314-5d9e-4779-a45b-125788c98a70`.
+  Manifest: `sha256:a3a2eb93bc5e556ef65cdbcbc238b0ee60edc3310262e56a319813504e44009b`.
+  Game image: `sha256:67c6b7cee3bc8e6a107c77dd9ee400c1fd7dab3860d0cf9539569d7f27cd0fe3`.
+  The workflow's source commit records provenance; the manifest retains the legacy
+  repository alias's mutable `main` source URL.
+- FFA verification round `round_d7d2ea99-0704-4400-9db5-fc1c87082189` (4828)
+  completed all eight episodes at 01:56 UTC, with eight distinct lineups and all
+  twelve champions appearing five or six times. The league remains unpaused with
+  submissions open, eight-seat `random_fill`, OpenSkill, and a thirty-minute cadence.
+- [Hosted replay](https://softmax.com/episode-requests/ereq_94ac36de-7a25-4320-8c6b-d8214a30eebd/watch)
+  rendered in isolated headless Chromium at 1280×720.
+  [Screenshot](https://softmax.nexus/artifacts/d5288cf8-97b8-4891-bc3b-cb31142c51a6).
+  Native inspection of its decompressed recording confirms eight players, 729 ticks,
+  seed `10812957718315239762`, and final state hash `F8097FD4437082FC`.
 
 ### 0.7.4 — November 3, 2026 (UTC)
 
