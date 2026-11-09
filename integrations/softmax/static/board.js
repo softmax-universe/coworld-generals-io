@@ -14,9 +14,7 @@
         // the mountain icon) — like obstacles-in-fog in the original game.
         if (t.owner === -2) {
           cls += ' fog';
-          if (t.general) { cls += ' has-general'; icon = true; }
-          else if (t.castle) { cls += ' has-castle'; icon = true; }
-          else if (t.mountain) { cls += ' fog-mountain has-mountain'; icon = true; }
+          if (t.mountain) { cls += ' fog-mountain has-mountain'; icon = true; }
         } else {
           if (t.mountain) cls += ' mountain has-mountain';
           else if (t.owner === 0) cls += ' blue';
@@ -102,9 +100,8 @@
           // Coworld uses 1=red and 2=blue; the competition renderer uses 0=blue and 1=red.
           owner: kind === 0 || kind === 5 ? -2 : frame.owner_grid[r][c] === 0 ? -1 :
             frame.owner_grid[r][c] === 1 ? 1 : frame.owner_grid[r][c] === 2 ? 0 : frame.owner_grid[r][c]-1,
-          count: frame.army_grid[r][c], mountain: [2, 5].includes(frame.known_type_grid?.[r][c] ?? kind),
-          general: (frame.known_type_grid?.[r][c] ?? kind) === 4,
-          castle: (frame.known_type_grid?.[r][c] ?? kind) === 3,
+          count: frame.army_grid[r][c], mountain: kind === 2 || kind === 5,
+          general: kind === 4, castle: kind === 3,
         })));
         render();
       },
