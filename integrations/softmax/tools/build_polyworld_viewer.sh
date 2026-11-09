@@ -83,6 +83,28 @@ metadata = """      const ratings = new URLSearchParams(location.hash.slice(1)).
 assert html.count("      FS.writeFile('/episode.replay', bytes);") == 1, 'upstream replay staging changed'
 html = html.replace("      FS.writeFile('/episode.replay', bytes);", metadata, 1)
 (output / 'index.html').write_text(html)
+# Live and replay run the same renderer. The live shell accepts only its parent.
+live = html.replace("arguments: ['--replay', '/episode.replay']", "arguments: ['--live']")
+start = live.index('  preRun: [function() {')
+end = live.index('\n};', start)
+live = live[:start] + '''  preRun: [],
+  pendingLiveSnapshot: null
+''' + live[end:]
+live = live.replace('<title>Generals Replay</title>', '<title>Polyworld Generals</title>')
+live = live.replace('Unable to play this replay.', 'Unable to open this game.')
+live = live.replace('Loading replay viewer…', 'Loading Polyworld Generals…')
+live = live.replace('Loading Generals replay…', 'Loading Polyworld Generals…')
+live = live.replace('<a id="download-replay"', '<a hidden id="download-replay"')
+live = live.replace('</script>', '''
+window.addEventListener('message', event => {
+  if (event.source !== parent || event.origin !== location.origin ||
+      event.data?.type !== 'polyworld-live-state') return;
+  const encoded = JSON.stringify(event.data.state);
+  Module.pendingLiveSnapshot = encoded;
+  if (Module.polyworldLiveUpdate) Module.polyworldLiveUpdate(encoded);
+});
+</script>''', 1)
+(output / 'live.html').write_text(live)
 for suffix in ('js', 'wasm', 'data'):
     shutil.copyfile(web / f'generals.{suffix}', output / f'generals.{suffix}')
 licenses = output / 'licenses'

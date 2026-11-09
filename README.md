@@ -14,9 +14,17 @@ The complete native Polyworld application lives in [`polyworld/`](polyworld/READ
 The former Python/JAX runtime remains available with `--engine jax`. See
 [the runtime integration](integrations/softmax/POLYWORLD.md) for provenance and packaging.
 
+## Play against league leaders
+
+Use `python -m integrations.softmax.play_leaders --elevated` to inspect the
+current seven FFA leaders. Add `--create --coworld-id COWORLD_ID` to prepare a
+verified eight-seat lobby with a human in seat 0. Use the exact published
+Polyworld release ID. Team access is required for other owners’ policies.
+See [the hosted runtime guide](integrations/softmax/POLYWORLD.md#human-lobbies-against-league-leaders) for release and proxy requirements.
+
 ## Run locally
 
-Use Python 3.12 and Nim 2.2.10, as in CI. Run these commands from the checkout root:
+Use Python 3.12, Nim 2.2.10 and Emscripten 5.0.7, as in CI. Run these commands from the checkout root:
 
 ```bash
 git clone git@github.com:Metta-AI/coworld-generals-io.git
@@ -27,7 +35,9 @@ python -m pip install -r integrations/softmax/requirements-polyworld.lock
 integrations/softmax/tools/build_polyworld_runtime.sh "$PWD/polyworld/out"
 export GENERALS_POLYWORLD_ENGINE="$PWD/polyworld/out/generals-polyworld"
 export GENERALS_BASIC_WORKER="$PWD/polyworld/out/generals-basic"
-python -m integrations.softmax.local --variant ffa --human
+integrations/softmax/tools/build_polyworld_viewer.sh "$PWD/polyworld/out/browser"
+export GENERALS_POLYWORLD_VIEWER="$PWD/polyworld/out/browser"
+python -m integrations.softmax.local --variant ffa --human --bundled-bots
 ```
 
 Follow the printed player link. You control seat 0 against bundled bots.
@@ -36,10 +46,10 @@ perspectives, seeking, and download. Ctrl+C stops the server.
 
 ```bash
 # Choose an FFA field size; the default is four.
-python -m integrations.softmax.local --variant ffa --players 8 --human
+python -m integrations.softmax.local --variant ffa --players 8 --human --bundled-bots
 # Other human modes:
-python -m integrations.softmax.local --variant competition --human
-python -m integrations.softmax.local --variant castles --human
+python -m integrations.softmax.local --variant competition --human --bundled-bots
+python -m integrations.softmax.local --variant castles --human --bundled-bots
 # Short bot-only episode; retain the server for replay inspection:
 python -m integrations.softmax.local --variant ffa --max-turns 40 --keep-open
 ```

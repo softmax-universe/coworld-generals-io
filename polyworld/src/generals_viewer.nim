@@ -3,8 +3,12 @@ import
   generals/[common, views]
 
 proc main() =
-  ## Opens only recorded actions through the same verified game simulation.
+  ## Opens server-driven play or verified recordings in the shared renderer.
   let arguments = commandLineParams()
+  when defined(softmaxReplay) and defined(emscripten):
+    if arguments == @["--live"]:
+      runGraphics(defaultConfig(), "/assets", startGame = true, remote = true)
+      return
   if arguments.len != 2 or arguments[0] != "--replay":
     raise newException(
       GeneralsError,

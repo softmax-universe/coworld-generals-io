@@ -15,6 +15,9 @@ when gameProfiles.ProfileTracePath.len > 0:
 when defined(softmaxReplay) and defined(emscripten):
   {.emit: "#include <emscripten.h>".}
 
+when defined(softmaxReplay):
+  import polyworld_live
+
 const
   SidebarWidth = 406.0'f
   ChatLineHeight = 24.0'f
@@ -53,6 +56,10 @@ type
     transport: Transport
     pov: Pov
     visibilityScratch: seq[bool]
+    remote: bool
+    liveChatTarget: int = -2
+    when defined(softmaxReplay):
+      live: LiveSnapshot
     replaying: bool
     replayEnded: bool
     replayEndAt: MonoTime
@@ -213,7 +220,7 @@ proc refreshVisibility(view: View) =
 
 proc outcomeOpen(view: View): bool =
   ## Returns whether the result panel blocks the underlying match controls.
-  not view.replaying and not view.outcomeClosed and
+  not view.remote and not view.replaying and not view.outcomeClosed and
     (view.world.finished or (view.hasHuman() and not view.humanAlive()))
 
 proc panel(view: View, origin, size: Vec2) =
@@ -257,6 +264,11 @@ proc rankWidth(view: View): float32 =
   ## Accommodates supplied MMR values without overlapping adjacent columns.
   result = 50
   when defined(softmaxReplay):
+    if view.remote:
+      result = 78
+      for score in view.live.skills:
+        result = max(result, view.sk.getTextSize("Score", score).x + 40)
+      return
     if view.replaying:
       result = 78
       for score in view.replay.data.header.setup.skillScores:
@@ -289,12 +301,13 @@ proc layout(view: View) =
   if view.chatWidth() != previousChatWidth:
     view.chatDirty = true
   let
-    inset = vec2(12, 44)
+    inset = vec2(12, if view.remote: 100 else: 44)
     scoreboardHeight = (2 + (view.world.config.players + 1) * 36).float32
     available = vec2(
       view.size.x - (if view.stacked: 0.0'f else: view.sidebarWidth()) - inset.x * 2,
       view.contentHeight() - inset.y - 12 -
-        (if view.stacked: scoreboardHeight + 24 + ChatLineHeight * 2 + 8 + ChatInputHeight else: 0.0'f)
+        (if view.stacked: scoreboardHeight + 24 + ChatLineHeight * 2 + 8 + ChatInputHeight +
+          (if view.remote: 32 else: 0) else: 0.0'f)
     )
     columns = view.world.config.width.float32
     rows = view.world.config.height.float32
@@ -529,7 +542,10 @@ proc winnerText(view: View): string =
 
 proc drawReplayOutcome(view: View) =
   ## Shows the final result while leaving replay controls available below it.
-  if not view.replaying or view.world.turn != view.replay.data.hashes.len:
+  if view.remote:
+    if not view.world.finished:
+      return
+  elif not view.replaying or view.world.turn != view.replay.data.hashes.len:
     return
   when not defined(softmaxReplay):
     if not view.world.finished:
@@ -798,9 +814,18 @@ proc drawScoreboard(view: View) =
     armies, lands: array[MaxPlayers, int]
     ordered: seq[int]
   for player in 0 ..< players:
-    let score = totals(view.world, player)
-    armies[player] = score.army
-    lands[player] = score.land
+    when defined(softmaxReplay):
+      if view.remote:
+        armies[player] = view.live.army[player]
+        lands[player] = view.live.land[player]
+      else:
+        let score = totals(view.world, player)
+        armies[player] = score.army
+        lands[player] = score.land
+    else:
+      let score = totals(view.world, player)
+      armies[player] = score.army
+      lands[player] = score.land
     ordered.add(player)
   ordered.sort(proc(a, b: int): int =
     ## Sorts living armies first and preserves a deterministic tie order.
@@ -834,15 +859,16 @@ proc drawScoreboard(view: View) =
         view.drawPov(player, at)
       elif column == 1:
         when defined(softmaxReplay):
-          if view.replaying:
+          if view.replaying or view.remote:
             if player < 0:
               view.centered("Skill", at + vec2(0, 6), width, Black, "Score")
             else:
               view.drawStar(at + vec2(7, 9))
-              view.label(view.replay.data.header.setup.skillScores[player], at + vec2(28, 6), Black, "Score")
-        if not view.replaying or not defined(softmaxReplay):
+              let score = if view.remote: view.live.skills[player] else: view.replay.data.header.setup.skillScores[player]
+              view.label(score, at + vec2(28, 6), Black, "Score")
+        if (not view.replaying and not view.remote) or not defined(softmaxReplay):
           view.drawStar(at + vec2(7, 9))
-        if player >= 0 and (not view.replaying or not defined(softmaxReplay)):
+        if player >= 0 and ((not view.replaying and not view.remote) or not defined(softmaxReplay)):
           let rank = view.roster.playerMmr(player)
           view.label(
             if rank < 0: "?" else: $rank,
@@ -1048,6 +1074,17 @@ proc drawChat(view: View) =
     sk.drawRect(bounds.xy + vec2(view.chatWidth() - 5, 4 + offset),
       vec2(3, thumb), rgbx(170, 170, 170, 255))
   sk.popClipRect()
+  when defined(softmaxReplay):
+    if view.remote and view.humanAlive():
+      let recipient = if view.liveChatTarget == -2: "Everyone" else: view.roster.displayName(view.liveChatTarget)
+      if view.button("To: " & view.fitted(recipient, view.chatWidth() - 70, "Hud"),
+          vec2(bounds.x, bounds.y - 32), "Hud", vec2(6)):
+        if view.liveChatTarget == -2:
+          view.liveChatTarget = 0
+        else:
+          inc view.liveChatTarget
+          if view.liveChatTarget >= view.world.config.players:
+            view.liveChatTarget = -2
   view.drawChatInput(input)
   if view.replaying or not view.hasHuman():
     view.label(
@@ -1096,7 +1133,10 @@ proc drawChat(view: View) =
 
 proc sendChat(view: View, message: string) =
   ## Adds one local message and returns keyboard control to the board.
-  if view.hasHuman() and view.hub != nil and
+  when defined(softmaxReplay):
+    if view.remote:
+      liveInput("chat", value = view.liveChatTarget, text = message)
+  if not view.remote and view.hasHuman() and view.hub != nil and
     view.hub.queueMessage(view.humanPlayer, -2, message) > 0:
       view.hub.deliverMessages(view.log, view.world.turn)
       let entry = view.log.entries[^1]
@@ -1437,6 +1477,31 @@ proc handleInput(view: View) =
           max(0, view.chatLines.len - view.chatRows())
         )
     return
+  when defined(softmaxReplay):
+    if view.remote:
+      if not view.humanAlive() or view.world.finished:
+        return
+      for (key, direction) in [
+        (KeyW, 0), (KeyUp, 0), (KeyS, 1), (KeyDown, 1),
+        (KeyA, 2), (KeyLeft, 2), (KeyD, 3), (KeyRight, 3)
+      ]:
+        if window.buttonPressed[key]:
+          liveInput("move", value = direction,
+            half = window.buttonDown[KeyLeftShift] or window.buttonDown[KeyRightShift])
+      for (key, command) in [(KeyH, "split"), (KeyZ, "split"),
+        (KeyE, "undo"), (KeyQ, "clear"), (KeyB, "build"),
+        (KeyG, "general"), (KeySpace, "deselect")]:
+          if window.buttonPressed[key]:
+            liveInput(command)
+      if window.buttonPressed[MouseRight]:
+        liveInput("clear")
+      if window.buttonPressed[MouseLeft]:
+        let position = window.mousePos.vec2 / view.sk.uiScale - view.boardOrigin
+        let x = int(floor(position.x / view.cellSize))
+        let y = int(floor(position.y / view.cellSize))
+        if x in 0 ..< view.world.config.width and y in 0 ..< view.world.config.height:
+          liveInput("tile", value = y * view.world.config.width + x)
+      return
   if window.buttonPressed[KeySpace]:
     view.paused = not view.paused
     view.elapsed = 0
@@ -1488,6 +1553,9 @@ proc capture(view: View) =
 
 proc frame(view: View) =
   ## Advances bounded simulation time and draws one complete local frame.
+  when defined(softmaxReplay):
+    if view.remote and view.live.names.len == 0:
+      return
   let
     now = getMonoTime()
     elapsed = min(0.25, (now - view.lastFrame).inNanoseconds.float64 / 1e9)
@@ -1499,7 +1567,7 @@ proc frame(view: View) =
     if view.screen == GameScreen and view.replaying:
       if view.screenshot.len == 0:
         view.playReplay(elapsed)
-    elif view.screen == GameScreen and not view.paused and
+    elif view.screen == GameScreen and not view.remote and not view.paused and
       not view.world.finished and view.screenshot.len == 0:
         view.elapsed += elapsed * view.initialSpeed.float64
         while view.elapsed >= TickSeconds:
@@ -1517,6 +1585,27 @@ proc frame(view: View) =
       view.drawBoard()
       view.drawScoreboard()
       view.drawTurn()
+      when defined(softmaxReplay):
+        if view.remote:
+          var x = 120.0'f
+          var y = 0.0'f
+          if view.humanAlive():
+            for (label, command) in [("Half [H]", "split"), ("Undo [E]", "undo"),
+              ("Clear [Q]", "clear"), ("Hold", "pass"), ("Surrender", "surrender")]:
+                if command == "surrender" and view.world.config.players < 3:
+                  continue
+                let width = view.sk.getTextSize("Hud", label).x + 20
+                if x + width > (if view.stacked: view.size.x else: view.scoreboard.x):
+                  x = 12
+                  y += 34
+                if view.button(label, vec2(x, y), "Hud", vec2(6)):
+                  liveInput(command)
+                x += width
+            if view.live.ruleset == "build_castles" and
+              view.button("Build [B]", vec2(x, y), "Hud", vec2(6)):
+                liveInput("build")
+          let statusWidth = if view.stacked: view.size.x - 24 else: view.scoreboard.x - 24
+          view.label(view.fitted(view.live.status, statusWidth, "Hud"), vec2(12, 72), Ink, "Hud")
       view.drawChat()
       if view.replaying:
         view.transport.drawTransport(view.sk, view.window, GameUiPanel(
@@ -1539,6 +1628,19 @@ proc frame(view: View) =
   if view.screenshot.len > 0 and view.frames >= 3:
     view.capture()
   view.window.swapBuffers()
+  when defined(softmaxReplay) and defined(emscripten):
+    if view.remote:
+      let tick = view.world.turn
+      let skillScores = view.live.skills.join("|")
+      let skills = skillScores.cstring
+      {.emit: """
+      EM_ASM({
+        Module.liveFrameCount = (Module.liveFrameCount || 0) + 1;
+        Module.liveTick = $0;
+        Module.liveSkillScores = UTF8ToString($1).split('|');
+        Module.polyworldFrame($0, 0);
+      }, `tick`, `skills`);
+      """.}
   if view.replaying:
     reportReplayFrame(view.world.turn.int32, 0)
     when defined(softmaxReplay) and defined(emscripten):
@@ -1571,6 +1673,9 @@ proc frame(view: View) =
         `outcomeCString`);
       """.}
 
+when defined(softmaxReplay) and defined(emscripten):
+  include polyworld_live_view
+
 proc runWindow(
     config: Config,
     assets: string,
@@ -1587,9 +1692,10 @@ proc runWindow(
     humanPlayer = 0,
     pauseOnStart = false,
     initialSpeed = 1,
-    vsync = true
+    vsync = true,
+    remote = false
 ) =
-  ## Runs the complete offline game with its shared Silky theme.
+  ## Runs local games, hosted human seats and recordings with the shared theme.
   let
     window = newWindow(
       "Polyworld Generals",
@@ -1647,7 +1753,8 @@ proc runWindow(
     botFiles: botFiles,
     screenshot: screenshot,
     recordPath: recordPath,
-    lastFrame: getMonoTime()
+    lastFrame: getMonoTime(),
+    remote: remote
   )
   view.sk.applyTheme()
   defer:
@@ -1655,12 +1762,18 @@ proc runWindow(
       saveReplay(recordPath, view.recording.data)
   if replayPath.len > 0:
     view.startReplay(loadReplay(replayPath), autoTurns)
+  elif remote:
+    view.screen = GameScreen
   else:
     view.start()
     for i in 0 ..< autoTurns:
       view.advance(autoplay = true)
-    if not startGame:
+    if not startGame and not remote:
       view.screen = MenuScreen
+  when defined(softmaxReplay) and defined(emscripten):
+    if remote:
+      liveView = view
+      installLiveBridge()
   when gameProfiles.ProfileTracePath.len > 0:
     silkyProfiles.startRuntimeProfileTrace(gameProfiles.ProfileTracePath)
     gameProfiles.startProfileTrace()
@@ -1687,7 +1800,8 @@ proc runGraphics*(
     humanPlayer = 0,
     pauseOnStart = false,
     initialSpeed = 1,
-    vsync = true
+    vsync = true,
+    remote = false
 ) =
   ## Maps asset and graphical failures to the game's public exception type.
   try:
@@ -1707,7 +1821,8 @@ proc runGraphics*(
       humanPlayer,
       pauseOnStart,
       initialSpeed,
-      vsync
+      vsync,
+      remote
     )
   except IOError, OSError, PixieError, SilkyError,
     SilkyAtlasError, WindyError:

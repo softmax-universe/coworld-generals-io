@@ -76,8 +76,11 @@ selects a supported size from its roster.
 
 ## Shared play experience
 
-The same browser assets render local play, hosted seats, public live scores,
-and static replays. Open `/client/launch` on a running local server, or open
+Human seats and binary replays use the same Polyworld Silky renderer compiled
+to WebAssembly. Live seats show their fog-filtered board, public army/land
+totals and actual skill scores. The browser transport owns the action queue;
+the renderer never advances a local simulation. Public spectators retain
+the score-only view. Open `/client/launch` on a running local server, or open
 `index.html` through a static HTTP server after building the replay bundle.
 The entry screen accepts binary/gzip tapes and retained JAX JSON replays and links to the Generals
 lobby flow on Softmax. Hosted lobbies own mode selection, human invitations,
@@ -101,22 +104,32 @@ Portrait phones stack a full-width board above the player table and chat, with
 playback controls wrapped into three rows. Board sizing leaves clearance below
 the turn counter and above the ribbon without clipping the map.
 
-The game owns these assets in `static/`. Softmax embeds them through its
+The game owns the renderer in `polyworld/` and its transport in `static/`. Softmax embeds them through its
 existing live/replay components; do not copy the renderer into the website.
+
+## Play against league leaders
+
+Use `python -m integrations.softmax.play_leaders --elevated` to inspect the
+current seven FFA leaders. Add `--create --coworld-id COWORLD_ID` to prepare a
+verified eight-seat lobby with a human in seat 0. Use the exact published
+Polyworld release ID. Team access is required for other owners’ policies.
+See [the hosted runtime guide](POLYWORLD.md#human-lobbies-against-league-leaders) for release and proxy requirements.
 
 ## Play locally
 
-From the repository root, with Python 3.12:
+From the repository root, with Python 3.12, Nim 2.2.10 and Emscripten 5.0.7:
 
 ```bash
 python -m pip install -r integrations/softmax/requirements-polyworld.lock
 integrations/softmax/tools/build_polyworld_runtime.sh "$PWD/polyworld/out"
 export GENERALS_POLYWORLD_ENGINE="$PWD/polyworld/out/generals-polyworld"
 export GENERALS_BASIC_WORKER="$PWD/polyworld/out/generals-basic"
-python -m integrations.softmax.local --variant ffa --human
-# Other modes (omit --human for bundled bots):
-python -m integrations.softmax.local --variant ffa --players 8 --human
-python -m integrations.softmax.local --variant castles --human
+integrations/softmax/tools/build_polyworld_viewer.sh "$PWD/polyworld/out/browser"
+export GENERALS_POLYWORLD_VIEWER="$PWD/polyworld/out/browser"
+python -m integrations.softmax.local --variant ffa --human --bundled-bots
+# Other local modes:
+python -m integrations.softmax.local --variant ffa --players 8 --human --bundled-bots
+python -m integrations.softmax.local --variant castles --human --bundled-bots
 ```
 
 Open the printed player link. Select an owned tile, then use arrow keys/WASD or
@@ -149,7 +162,7 @@ python -m integrations.softmax.local --seed 7 --keep-open
 ```
 
 `--max-turns 40` makes a short smoke test. Without it, local games use the hosted
-caps: 50,002 engine ticks for FFA bots, 2,000 for other bots, and 1,200 with `--human`. Each local run writes into its own ignored `local-output/episode-*`
+caps: 50,002 engine ticks for FFA bots, 2,000 for other bots, and 1,200 with `--human --bundled-bots`. Each local run writes into its own ignored `local-output/episode-*`
 directory. `config.json` contains local player tokens; do not publish it. The
 shareable outputs are `results.json` and `game.replay` (`replay.json` with JAX). `--port` selects another
 local port. The local launcher binds only to loopback.
