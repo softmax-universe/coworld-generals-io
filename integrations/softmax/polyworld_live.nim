@@ -11,7 +11,7 @@ type
   LiveSnapshot* = object
     width*, height*, slot*, tick*, selected*, winner*: int
     half*, finished*: bool
-    types*, owners*, armies*: seq[seq[int]]
+    types*, knownTypes*, owners*, armies*: seq[seq[int]]
     army*, land*: seq[int]
     alive*: seq[bool]
     names*, skills*, messages*: seq[string]

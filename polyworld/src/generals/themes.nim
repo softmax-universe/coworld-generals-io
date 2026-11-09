@@ -62,7 +62,10 @@ proc addTheme*(builder: AtlasBuilder, assets: string) =
     ("Hud", "Quicksand-Regular.ttf", 15.0'f),
     ("Small", "Quicksand-Regular.ttf", 12.0'f),
     ("Mono", "OverpassMono-Regular.ttf", 18.0'f),
-    ("Board", "Quicksand-Medium.ttf", 18.0'f)
+    ("Board", "Quicksand-Medium.ttf", 18.0'f),
+    ("Board24", "Quicksand-Medium.ttf", 24.0'f),
+    ("Board32", "Quicksand-Medium.ttf", 32.0'f),
+    ("Board48", "Quicksand-Medium.ttf", 48.0'f)
   ]:
     builder.addFont(assets / "fonts" / file, name, size)
   let typeface = readTypeface(assets / "fonts/Quicksand-Regular.ttf")

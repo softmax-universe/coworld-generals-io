@@ -62,6 +62,28 @@ The native desktop application remains available under `polyworld/`.
 Hosted variants still support two through eight seats, the same sixteen variant
 IDs, all three leagues, both player artifact kinds and human seats.
 
+## Map navigation and scouting
+
+Live play and replays share map navigation: wheel or `+`/`-` (`0`/`9`) zooms,
+middle-button dragging pans, and `F` fits the whole map. The toolbar provides
+zoom and fit buttons. Zoom preserves the pointer's map position, clips terrain
+to the board area, and scales army labels. Map clicks use the same transform.
+
+The human transport remembers previously visible mountains, cities and capitals
+for the browser session, including socket reconnects. Fog still hides current
+owners and armies. Remembered cities and capitals remain routeable; confirmed
+mountains and unscouted obstacles block queued movement. A new match clears
+scouting memory. Refreshing the page starts a new browser session.
+
+The official [version history](https://generals.io/versions) documents mouse-wheel
+zoom and shared city/mountain obstacle markers. Its public v31.4.6 client
+(`generals-main-prod-v31.4.6-df40179d.js`, inspected November 9, 2026) serializes
+hidden generals as ordinary fog and hidden cities as obstacles; hidden armies
+are zero. Its SHA-256 is
+`558140f5d7b4f7475933c48bec1978ab174909b020caf33d91260dd4ee99251e`.
+Our retained scouting icons are an explicit client usability behavior, not a claim
+of complete official fog/UI parity. Game observations and engine rules are unchanged.
+
 ## Build and run
 
 The Coworld Compose game service targets Docker's `polyworld-game` stage.
