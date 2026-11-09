@@ -53,7 +53,7 @@ COPY polyworld/dependencies.lock /build/polyworld/dependencies.lock
 COPY polyworld/tools/fetch_deps.sh /build/polyworld/tools/fetch_deps.sh
 COPY --from=runtime-build /build/polyworld/.deps /build/polyworld/.deps
 COPY polyworld /build/polyworld
-COPY integrations/softmax/polyworld_hosted.nim integrations/softmax/replay-dependencies.lock /build/integrations/softmax/
+COPY integrations/softmax/polyworld_hosted.nim integrations/softmax/polyworld_live.nim integrations/softmax/polyworld_live_view.nim integrations/softmax/replay-dependencies.lock /build/integrations/softmax/
 COPY integrations/softmax/tools/build_polyworld_viewer.sh /build/integrations/softmax/tools/
 RUN bash integrations/softmax/tools/build_polyworld_viewer.sh /build/replay-viewer
 
