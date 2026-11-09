@@ -7,7 +7,7 @@ from pathlib import Path
 from integrations.softmax.config import PLAYER_NAMES, GameConfig
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = "https://github.com/Metta-AI/coworld-generals-io/tree/main/integrations/softmax"
+SOURCE = "https://github.com/softmax-universe/coworld-generals-io/tree/main/integrations/softmax"
 
 
 def document(*filenames):

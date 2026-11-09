@@ -11,7 +11,7 @@ proc updateLive(encoded: cstring) {.cdecl, exportc: "generals_live_update",
   assert state.alive.len == state.names.len
   assert state.slot in 0 ..< state.names.len
   assert state.types.len == state.height and state.owners.len == state.height
-  assert state.armies.len == state.height
+  assert state.armies.len == state.height and state.knownTypes.len == state.height
   let view = liveView
   view.live = state
   view.humanPlayer = state.slot
@@ -30,14 +30,14 @@ proc updateLive(encoded: cstring) {.cdecl, exportc: "generals_live_update",
     view.world.generals[player] = -1
   for y in 0 ..< state.height:
     assert state.types[y].len == state.width and state.owners[y].len == state.width
-    assert state.armies[y].len == state.width
+    assert state.armies[y].len == state.width and state.knownTypes[y].len == state.width
     for x in 0 ..< state.width:
       let index = y * state.width + x
       let kind = state.types[y][x]
       assert kind in 0 .. 5 and state.owners[y][x] in 0 .. state.names.len
       view.visible[index] = kind notin {0, 5}
       view.world.tiles[index] = Tile(
-        kind: case kind
+        kind: case state.knownTypes[y][x]
           of 2, 5: Mountain
           of 3: City
           of 4: General

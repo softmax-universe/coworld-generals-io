@@ -12,7 +12,7 @@ import
 when gameProfiles.ProfileTracePath.len > 0:
   import silky/profiles as silkyProfiles
 
-when defined(softmaxReplay) and defined(emscripten):
+when defined(emscripten):
   {.emit: "#include <emscripten.h>".}
 
 when defined(softmaxReplay):
@@ -67,6 +67,10 @@ type
     controls: Controls
     screen: Screen
     boardOrigin: Vec2
+    boardViewport: Rect
+    zoom: float32 = 1
+    pan, panMouse: Vec2
+    panning: bool
     cellSize: float32
     size: Vec2
     stacked: bool
@@ -301,7 +305,7 @@ proc layout(view: View) =
   if view.chatWidth() != previousChatWidth:
     view.chatDirty = true
   let
-    inset = vec2(12, if view.remote: 100 else: 44)
+    inset = vec2(12, if view.remote: 134 else: 78)
     scoreboardHeight = (2 + (view.world.config.players + 1) * 36).float32
     available = vec2(
       view.size.x - (if view.stacked: 0.0'f else: view.sidebarWidth()) - inset.x * 2,
@@ -311,17 +315,29 @@ proc layout(view: View) =
     )
     columns = view.world.config.width.float32
     rows = view.world.config.height.float32
-  view.cellSize = min(
-    available.x / columns,
-    available.y / rows
-  )
-  let mapSize = vec2(columns, rows) * view.cellSize
-  view.boardOrigin = inset + (available - mapSize) / 2
+  let fittedCell = min(available.x / columns, available.y / rows)
+  let fittedSize = vec2(columns, rows) * fittedCell
+  view.boardViewport = rect(inset, available)
   if view.stacked:
-    view.boardOrigin.y = inset.y
-    view.scoreboard = rect(12, view.boardOrigin.y + mapSize.y + 12, view.size.x - 24, scoreboardHeight)
+    view.scoreboard = rect(12, inset.y + available.y + 12, view.size.x - 24, scoreboardHeight)
   else:
     view.scoreboard = rect(view.size.x - view.sidebarWidth(), 0, view.sidebarWidth(), scoreboardHeight)
+  view.cellSize = fittedCell * view.zoom
+  let mapSize = fittedSize * view.zoom
+  # Keep every edge reachable without letting the whole map leave the viewport.
+  let panLimit = vec2(max(0.0'f, (mapSize.x - available.x) / 2),
+    max(0.0'f, (mapSize.y - available.y) / 2))
+  view.pan.x = clamp(view.pan.x, -panLimit.x, panLimit.x)
+  view.pan.y = clamp(view.pan.y, -panLimit.y, panLimit.y)
+  view.boardOrigin = inset + (available - mapSize) / 2 + view.pan
+
+proc zoomAt(view: View, factor: float32, anchor: Vec2) =
+  ## Keeps the map point under the pointer fixed while changing tile size.
+  let previous = view.zoom
+  view.zoom = clamp(previous * factor, 0.5'f, 4.0'f)
+  let center = view.boardViewport.xy + view.boardViewport.wh / 2
+  view.pan = (anchor - center) + (view.pan - (anchor - center)) * (view.zoom / previous)
+  view.layout()
 
 proc start(view: View, newSeed = false) =
   ## Resets match state and gives the selected human seat its own general.
@@ -551,13 +567,9 @@ proc drawReplayOutcome(view: View) =
     if not view.world.finished:
       return
   let
-    boardSize = vec2(
-      view.world.config.width.float32,
-      view.world.config.height.float32
-    ) * view.cellSize
-    size = vec2(min(540.0'f, boardSize.x - 24), 180)
-    origin = view.boardOrigin + (boardSize - size) / 2
-  view.sk.drawRect(view.boardOrigin, boardSize, rgbx(0, 0, 0, 96))
+    size = vec2(min(540.0'f, view.boardViewport.w - 24), 180)
+    origin = view.boardViewport.xy + (view.boardViewport.wh - size) / 2
+  view.sk.drawRect(view.boardViewport.xy, view.boardViewport.wh, rgbx(0, 0, 0, 96))
   view.panel(origin, size)
   if view.world.winner >= 0:
     view.centered(
@@ -675,6 +687,8 @@ proc drawBoard(view: View, preview = false) =
       width.float32,
       view.world.config.height.float32
     ) * view.cellSize
+  if not preview:
+    sk.pushClipRect(view.boardViewport)
   sk.drawRect(view.boardOrigin, mapSize, Fog)
   for i, tile in view.world.tiles:
     let
@@ -693,11 +707,15 @@ proc drawBoard(view: View, preview = false) =
           of Mountain: MountainColor
       sk.drawRect(origin, vec2(view.cellSize), Grid)
       sk.drawRect(origin, vec2(size), color)
+    var remembered = false
+    when defined(softmaxReplay):
+      remembered = view.remote and not shown and
+        view.live.knownTypes[i div width][i mod width] in {2, 3, 4}
     if not preview and not view.replaying and
       view.humanAlive() and not view.world.finished and
-      (tile.kind == Mountain or (not shown and tile.kind == City)):
+      (tile.kind == Mountain or (not shown and not remembered and tile.kind == City)):
         view.drawBlockedGlow(i, origin, size)
-    if shown and tile.kind != Plain:
+    if (shown or remembered) and tile.kind != Plain:
       let image =
         case tile.kind
         of General: "crown"
@@ -716,7 +734,12 @@ proc drawBoard(view: View, preview = false) =
               "50%"
           else:
             $tile.army
-        font = if view.cellSize < 25: "Small" else: "Board"
+        font =
+          if view.cellSize < 25: "Small"
+          elif view.cellSize < 48: "Board"
+          elif view.cellSize < 72: "Board24"
+          elif view.cellSize < 96: "Board32"
+          else: "Board48"
         textSize = sk.getTextSize(font, number)
         at = origin + (vec2(size) - textSize) / 2
       view.label(number, at + vec2(1), rgbx(0, 0, 0, 210), font)
@@ -730,6 +753,8 @@ proc drawBoard(view: View, preview = false) =
         Gold
       )
     view.drawQueuedArrows()
+  if not preview:
+    sk.popClipRect()
 
 proc turnText(turn: int): string =
   ## Shows whole turns with the original dot for an intervening half-turn.
@@ -1439,6 +1464,17 @@ proc drawHelp(view: View) =
 proc handleInput(view: View) =
   ## Converts local mouse and keyboard input into bounded human orders.
   let window = view.window
+  var wheelSteps = window.scrollDelta.y
+  when defined(emscripten):
+    var wheelPixels: cdouble
+    {.emit: """
+    `wheelPixels` = EM_ASM_DOUBLE({
+      const delta = Module.boardWheelPixels;
+      Module.boardWheelPixels = 0;
+      return delta;
+    });
+    """.}
+    wheelSteps = -wheelPixels.float32 / 100
   if window.buttonPressed[KeyF2]:
     gameProfiles.toggleProfileTrace()
   if view.screen == GameScreen and view.outcomeOpen():
@@ -1456,6 +1492,28 @@ proc handleInput(view: View) =
       view.elapsed = 0
   if view.screen != GameScreen:
     return
+  let mouse = window.mousePos.vec2 / view.sk.uiScale
+  let overBoard = mouse.x >= view.boardViewport.x and mouse.y >= view.boardViewport.y and
+    mouse.x < view.boardViewport.x + view.boardViewport.w and mouse.y < view.boardViewport.y + view.boardViewport.h
+  if overBoard and wheelSteps != 0:
+    view.zoomAt(pow(1.15'f, wheelSteps), mouse)
+  if window.buttonPressed[KeyEqual] or window.buttonPressed[Key0]:
+    view.zoomAt(1.2, view.boardViewport.xy + view.boardViewport.wh / 2)
+  if window.buttonPressed[KeyMinus] or window.buttonPressed[Key9]:
+    view.zoomAt(1 / 1.2, view.boardViewport.xy + view.boardViewport.wh / 2)
+  if window.buttonPressed[KeyF]:
+    view.zoom = 1
+    view.pan = vec2(0)
+    view.layout()
+  if overBoard and window.buttonPressed[MouseMiddle]:
+    view.panning = true
+    view.panMouse = mouse
+  if not window.buttonDown[MouseMiddle]:
+    view.panning = false
+  if view.panning:
+    view.pan += mouse - view.panMouse
+    view.panMouse = mouse
+    view.layout()
   if view.replaying:
     if window.buttonPressed[KeySpace]:
       view.transport.player.handleKey(KeySpace)
@@ -1495,7 +1553,7 @@ proc handleInput(view: View) =
             liveInput(command)
       if window.buttonPressed[MouseRight]:
         liveInput("clear")
-      if window.buttonPressed[MouseLeft]:
+      if overBoard and window.buttonPressed[MouseLeft]:
         let position = window.mousePos.vec2 / view.sk.uiScale - view.boardOrigin
         let x = int(floor(position.x / view.cellSize))
         let y = int(floor(position.y / view.cellSize))
@@ -1522,7 +1580,7 @@ proc handleInput(view: View) =
   ]:
     if window.buttonPressed[key]:
       discard view.controls.step(view.world, dx, dy, half)
-  if window.buttonPressed[MouseLeft]:
+  if overBoard and window.buttonPressed[MouseLeft]:
     let
       position = window.mousePos.vec2 / view.sk.uiScale - view.boardOrigin
       x = int(floor(position.x / view.cellSize))
@@ -1583,6 +1641,17 @@ proc frame(view: View) =
     of GameScreen:
       view.buttonsEnabled = not view.outcomeOpen()
       view.drawBoard()
+      let zoomOrigin = vec2(12, view.boardViewport.y - 34)
+      let zoomCenter = view.boardViewport.xy + view.boardViewport.wh / 2
+      if view.button("-", zoomOrigin, "Hud", vec2(6)):
+        view.zoomAt(1 / 1.2, zoomCenter)
+      if view.button("+", zoomOrigin + vec2(36, 0), "Hud", vec2(6)):
+        view.zoomAt(1.2, zoomCenter)
+      if view.button("Fit [F]", zoomOrigin + vec2(72, 0), "Hud", vec2(6)):
+        view.zoom = 1
+        view.pan = vec2(0)
+        view.layout()
+      view.label("Wheel: zoom | Middle drag: pan", zoomOrigin + vec2(166, 6), Ink, "Hud")
       view.drawScoreboard()
       view.drawTurn()
       when defined(softmaxReplay):
@@ -1629,6 +1698,15 @@ proc frame(view: View) =
     view.capture()
   view.window.swapBuffers()
   when defined(softmaxReplay) and defined(emscripten):
+    let
+      zoom = view.zoom
+      cell = view.cellSize * view.sk.uiScale
+      originX = view.boardOrigin.x * view.sk.uiScale
+      originY = view.boardOrigin.y * view.sk.uiScale
+    {.emit: """
+    EM_ASM({ Module.boardView = {}; Module.boardView.zoom = $0; Module.boardView.cell = $1; Module.boardView.x = $2; Module.boardView.y = $3; },
+      `zoom`, `cell`, `originX`, `originY`);
+    """.}
     if view.remote:
       let tick = view.world.turn
       let skillScores = view.live.skills.join("|")
@@ -1708,6 +1786,18 @@ proc runWindow(
     gameProfiles.closeProfileViewer()
     window.onFrame = nil
     window.close()
+  when defined(emscripten):
+    # DOM wheel units are stable across operating systems; Windy normalizes
+    # its shared scroll stream differently on macOS and Linux.
+    {.emit: """
+    EM_ASM({
+      Module.boardWheelPixels = 0;
+      Module.canvas.addEventListener('wheel', event => {
+        const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? Module.canvas.clientHeight : 1;
+        Module.boardWheelPixels += event.deltaY * unit;
+      });
+    });
+    """.}
   window.makeContextCurrent()
   loadExtensions()
   let builder = newAtlasBuilder(2048, 4)

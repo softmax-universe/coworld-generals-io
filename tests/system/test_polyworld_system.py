@@ -308,14 +308,28 @@ def test_human_ffa_uses_polyworld_for_live_orders_and_completed_replay(tmp_path,
                 assert httpx.get(f"http://127.0.0.1:{port}/client/replay.data").status_code != 200
                 frame.locator("#canvas").click(position={"x": 10, "y": 50})
 
-                def key(button):
-                    before = native.evaluate("Module.liveFrameCount")
-                    page.keyboard.down(button)
-                    native.wait_for_function("before => Module.liveFrameCount >= before + 2", arg=before)
-                    page.keyboard.up(button)
+                def present():
                     before = native.evaluate("Module.liveFrameCount")
                     native.wait_for_function("before => Module.liveFrameCount >= before + 2", arg=before)
 
+                def key(button):
+                    page.keyboard.down(button)
+                    present()
+                    page.keyboard.up(button)
+                    present()
+
+                key("=")
+                native.wait_for_function("Module.boardView.zoom > 1")
+                page.mouse.move(350, 400)
+                page.mouse.wheel(0, -200)
+                native.wait_for_function("Module.boardView.zoom > 1.2")
+                before_pan = native.evaluate("Module.boardView.x")
+                page.mouse.down(button="middle")
+                page.mouse.move(390, 400, steps=4)
+                native.wait_for_function("x => Module.boardView.x !== x", arg=before_pan)
+                page.mouse.up(button="middle")
+                key("f")
+                native.wait_for_function("Module.boardView.zoom === 1")
                 key("g")
                 obs = observations[-1]
                 r, c = next((r, c) for r, row in enumerate(obs["type_grid"]) for c, kind in enumerate(row)
@@ -324,6 +338,21 @@ def test_human_ffa_uses_polyworld_for_live_orders_and_completed_replay(tmp_path,
                                                               (0, -1, "ArrowLeft"), (0, 1, "ArrowRight")]
                                  if 0 <= r + dr < obs["height"] and 0 <= c + dc < obs["width"]
                                  and obs["type_grid"][r + dr][c + dc] == 1)
+                # Anchor zoom at the army, then require a fresh click to select it.
+                geometry = native.evaluate("Module.boardView")
+                page.mouse.move(geometry["x"] + (c + 0.5) * geometry["cell"],
+                                geometry["y"] + (r + 0.5) * geometry["cell"])
+                page.mouse.wheel(0, -100)
+                native.wait_for_function("Module.boardView.zoom > 1")
+                key("Space")
+                geometry = native.evaluate("Module.boardView")
+                page.mouse.move(geometry["x"] + (c + 0.5) * geometry["cell"],
+                                geometry["y"] + (r + 0.5) * geometry["cell"])
+                present()
+                page.mouse.down()
+                present()
+                page.mouse.up()
+                present()
                 key(direction)
                 page.wait_for_function("Number(document.getElementById('land0').textContent) > 1")
                 assert any(action["type"] == "action" and action["action"][0] == 0 for action in actions)

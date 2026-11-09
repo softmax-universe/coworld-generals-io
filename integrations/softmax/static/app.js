@@ -10,6 +10,7 @@
   let liveStatus = '', finished = false, winner = -1;
   const replayURL = new URLSearchParams(location.hash.slice(1)).get('replay') || params.get('replay');
   const livePrefix = location.pathname.includes('/client/') ? location.pathname.split('/client/')[0] : '';
+  let knownTypes = null;
   let board = null, slot = null, selected = null, half = false, ws = null;
   let currentTurn = -1, sent = true, passTimer = null, replay = null, frameIndex = 0;
   let decodeReplayFrame;
@@ -28,9 +29,9 @@
   }
   const sameTile = (a, b) => a && b && a[0] === b[0] && a[1] === b[1];
   const canQueue = () => slot !== null && board && ws?.readyState === WebSocket.OPEN && !replay && !eliminated;
-  // Fog obstacles may hide castles or mountains. Plan around them until revealed.
+  // Unscouted obstacles remain blocked; remembered cities and generals are traversable.
   const blocked = (r, c) => r < 0 || c < 0 || r >= board.type_grid.length ||
-    c >= board.type_grid[0].length || [2, 5].includes(board.type_grid[r][c]);
+    c >= board.type_grid[0].length || [2, 5].includes(board.known_type_grid[r][c]);
   function blockedMove(action) {
     if (action[0] !== 0) return false;
     const [, r, c, direction] = action, [dr, dc] = moves[direction];
@@ -425,7 +426,12 @@
     messages(message);
     if (playerCount > 2 && !message.visible_owner_grid) throw new Error('This multiplayer observation is missing visible owner identities.');
     const owners = message.visible_owner_grid || message.owner_grid.map(row => row.map(o => o === 0 ? 0 : o === 1 ? slot+1 : 2-slot));
-    board = {...message, owner_grid: owners};
+    if (knownTypes === null || (board && message.turn < board.turn) || knownTypes.length !== message.type_grid.length || knownTypes[0].length !== message.type_grid[0].length) {
+      knownTypes = message.type_grid.map(row => [...row]);
+    }
+    knownTypes = message.type_grid.map((row, r) => row.map((kind, c) =>
+      kind === 0 || kind === 5 ? ([2, 3, 4].includes(knownTypes[r][c]) ? knownTypes[r][c] : kind) : kind));
+    board = {...message, owner_grid: owners, known_type_grid: knownTypes};
     // A failed step invalidates its route, but independently selected armies
     // keep their plans and can take over this turn.
     const failedMove = previousMove?.action[0] === 0 &&
@@ -467,7 +473,7 @@
     });
     nativePlayer.contentWindow.postMessage({type:'polyworld-live-state', state:{
       width, height:board.type_grid.length, slot, tick:currentTurn,
-      types:board.type_grid, owners:board.owner_grid, armies:board.army_grid,
+      types:board.type_grid, knownTypes:board.known_type_grid, owners:board.owner_grid, armies:board.army_grid,
       names:playerNames, skills:playerSkills, army:publicArmy, land:publicLand,
       alive, selected:index(selected), half, orders, messages:chatLines,
       status:liveStatus, ruleset, finished, winner,
