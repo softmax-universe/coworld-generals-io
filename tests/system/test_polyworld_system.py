@@ -231,3 +231,132 @@ def test_polyworld_tapes_verify_seek_and_reject_divergence(tmp_path, viewer, var
     page.goto(base + "/?divergent=1#replay=divergent.replay")
     page.wait_for_function("() => failed", timeout=60000)
     assert "diverged" in page.locator("#status-detail").inner_text()
+
+
+@pytest.mark.skipif(
+    os.environ.get("GENERALS_BROWSER_TESTS") != "1" or "GENERALS_POLYWORLD_VIEWER" not in os.environ,
+    reason="requires the compiled Polyworld engine/viewer and the real browser suite",
+)
+def test_human_ffa_uses_polyworld_for_live_orders_and_completed_replay(tmp_path, inspect_native_replay):
+    """A human must move and chat through Silky without exposing the full live map."""
+    import shutil
+    import socket
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import httpx
+    from playwright.sync_api import sync_playwright
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    root = Path(__file__).resolve().parents[2]
+    config = {
+        "tokens": [f"system-seat-{slot}" for slot in range(8)],
+        "players": [{"name": f"Seat {slot}"} for slot in range(8)],
+        "player_ratings": {"league": "System FFA", "label": "MMR", "players": [
+            {"slot": slot, "score": None if slot == 0 else 60.28 - slot} for slot in range(8)]},
+        "seed": 7, "max_turns": 48, "tick_interval_seconds": 0.5, "turn_timeout_seconds": 1,
+    }
+    (tmp_path / "config.json").write_text(json.dumps(config))
+    env = {**os.environ, "GENERALS_ENGINE": "polyworld", "GENERALS_KEEP_OPEN": "1",
+           "COGAME_HOST": "127.0.0.1", "COGAME_PORT": str(port),
+           "COGAME_CONFIG_URI": (tmp_path / "config.json").as_uri(),
+           "COGAME_RESULTS_URI": (tmp_path / "results.json").as_uri(),
+           "COGAME_SAVE_REPLAY_URI": (tmp_path / "game.replay").as_uri(),
+           "COGAME_PLAYER_FAILURE_URI": (tmp_path / "failure.json").as_uri()}
+    processes = []
+    with ExitStack() as stack:
+        log = stack.enter_context((tmp_path / "server.log").open("w"))
+        server = subprocess.Popen([sys.executable, "-m", "integrations.softmax.server"],
+                                  cwd=root, env=env, stdout=log, stderr=log)
+        processes.append(server)
+        try:
+            with httpx.Client(transport=httpx.HTTPTransport(retries=8), timeout=2) as client:
+                assert client.get(f"http://127.0.0.1:{port}/healthz").is_success
+            with sync_playwright() as p:
+                browser = p.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH") or shutil.which("chromium"))
+                page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                errors, observations, actions = [], [], []
+                page.on("pageerror", lambda error: errors.append(str(error)))
+
+                def socket_opened(ws):
+                    def received(raw):
+                        message = json.loads(raw)
+                        if message["type"] == "observation":
+                            observations.append(message)
+                    ws.on("framereceived", received)
+                    ws.on("framesent", lambda raw: actions.append(json.loads(raw)))
+
+                page.on("websocket", socket_opened)
+                page.goto(f"http://127.0.0.1:{port}/client/player?slot=0&token=system-seat-0")
+                frame = page.frame_locator("#polyworld-player")
+                page.wait_for_function("typeof document.querySelector('#polyworld-player')?.contentWindow.Module?.polyworldLiveUpdate === 'function'")
+                bots = []
+                for slot in range(1, 8):
+                    bot = subprocess.Popen([sys.executable, "-m", "integrations.softmax.player"], cwd=root,
+                                           env={**env, "COWORLD_PLAYER_WS_URL":
+                                                f"ws://127.0.0.1:{port}/player?slot={slot}&token=system-seat-{slot}"},
+                                           stdout=log, stderr=log)
+                    bots.append(bot)
+                    processes.append(bot)
+                page.wait_for_function("document.querySelector('#polyworld-player').contentWindow.Module.liveTick >= 2")
+                native = page.locator("#polyworld-player").element_handle().content_frame()
+                assert native.evaluate("Module.liveSkillScores") == ["—", "59.3", "58.3", "57.3", "56.3", "55.3", "54.3", "53.3"]
+                assert any(kind == 0 for row in observations[-1]["type_grid"] for kind in row)
+                assert httpx.get(f"http://127.0.0.1:{port}/client/replay.data").status_code != 200
+                frame.locator("#canvas").click(position={"x": 10, "y": 50})
+
+                def key(button):
+                    before = native.evaluate("Module.liveFrameCount")
+                    page.keyboard.down(button)
+                    native.wait_for_function("before => Module.liveFrameCount >= before + 2", arg=before)
+                    page.keyboard.up(button)
+                    before = native.evaluate("Module.liveFrameCount")
+                    native.wait_for_function("before => Module.liveFrameCount >= before + 2", arg=before)
+
+                key("g")
+                obs = observations[-1]
+                r, c = next((r, c) for r, row in enumerate(obs["type_grid"]) for c, kind in enumerate(row)
+                            if kind == 4 and obs["visible_owner_grid"][r][c] == 1)
+                direction = next(button for dr, dc, button in [(-1, 0, "ArrowUp"), (1, 0, "ArrowDown"),
+                                                              (0, -1, "ArrowLeft"), (0, 1, "ArrowRight")]
+                                 if 0 <= r + dr < obs["height"] and 0 <= c + dc < obs["width"]
+                                 and obs["type_grid"][r + dr][c + dc] == 1)
+                key(direction)
+                page.wait_for_function("Number(document.getElementById('land0').textContent) > 1")
+                assert any(action["type"] == "action" and action["action"][0] == 0 for action in actions)
+                assert any(obs["last_move_executed"] for obs in observations)
+                key("Enter")
+                page.keyboard.type("Human live WASM", delay=30)
+                key("Enter")
+                page.wait_for_function("document.getElementById('chat-messages').textContent.includes('Human live WASM')")
+                page.screenshot(path=str(tmp_path / "polyworld-live-desktop.png"))
+                page.set_viewport_size({"width": 390, "height": 844})
+                native.wait_for_function("Module.canvas.width === 390 && Module.canvas.height === 844")
+                page.screenshot(path=str(tmp_path / "polyworld-live-phone.png"))
+                page.context.set_offline(True)
+                page.wait_for_function("document.getElementById('mode').textContent === 'RECONNECTING'")
+                page.context.set_offline(False)
+                page.wait_for_function("document.getElementById('mode').textContent === 'PLAYER'")
+                page.wait_for_function("document.getElementById('polyworld-replay').style.display === 'block'", timeout=45000)
+                replay = page.locator("#polyworld-replay").element_handle().content_frame()
+                replay.wait_for_function("typeof Module.replayTick === 'number'", timeout=60000)
+                assert replay.evaluate("Module.replaySkillScores") == native.evaluate("Module.liveSkillScores")
+                assert all(bot.wait(timeout=10) == 0 for bot in bots)
+                result = json.loads((tmp_path / "results.json").read_text())
+                assert result["turns"] == 48 and result["timeouts"][1:] == [0] * 7
+                assert inspect_native_replay(tmp_path / "game.replay")["turns"] == 48
+                with page.expect_download() as downloaded:
+                    replay.locator("#download-replay").click()
+                assert Path(downloaded.value.path()).read_bytes() == (tmp_path / "game.replay").read_bytes()
+                assert not errors
+                browser.close()
+        finally:
+            for process in reversed(processes):
+                if process.poll() is None:
+                    process.terminate()
+                process.wait(timeout=10)
+    assert not (tmp_path / "failure.json").exists()
+    assert not any(token in (tmp_path / "server.log").read_text() for token in config["tokens"])

@@ -1,9 +1,13 @@
-/* Coworld transport and controls around the existing competition tile renderer. */
+/* Authenticated transport and one action queue for Polyworld live play and replays. */
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
   const boardElement = $('board'), renderer = GeneralsTiles(boardElement);
   const params = new URLSearchParams(location.search);
+  const polyworld = document.querySelector('meta[name="generals-engine"]')?.content === 'polyworld';
+  let nativePlayer, nativePlayerReady;
+  let playerNames = [], playerSkills = [], publicArmy = [], publicLand = [], alive = [], chatLines = [];
+  let liveStatus = '', finished = false, winner = -1;
   const replayURL = new URLSearchParams(location.hash.slice(1)).get('replay') || params.get('replay');
   const livePrefix = location.pathname.includes('/client/') ? location.pathname.split('/client/')[0] : '';
   let board = null, slot = null, selected = null, half = false, ws = null;
@@ -33,14 +37,20 @@
     return blocked(r+dr, c+dc);
   }
   const post = data => { if (parent !== window) parent.postMessage({src: 'coworld-replay', ...data}, '*'); };
-  function status(text, error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); }
+  function status(text, error = false) { liveStatus = text; $('status').textContent = text; $('status').classList.toggle('error', error); publishLive(); }
   function ready() { if (!readySent) { readySent = true; setTimeout(() => post({type: 'ready'}), 0); } }
   function fail(message) {
+    if (nativePlayer) nativePlayer.style.display = 'none';
     status(message, true); $('cover').hidden = false;
     $('cover-title').textContent = 'Unable to open this match'; $('cover-text').textContent = message;
     post({type: 'error', message});
   }
   function names(players, ratings = null) {
+    playerNames = players;
+    playerSkills = players.map((_, i) => {
+      const score = ratings?.players.find(player => player.slot === i)?.score;
+      return score == null ? '—' : score.toFixed(1);
+    });
     const matchbar = document.querySelector('.matchbar');
     playerCount = players.length;
     matchbar.classList.toggle('ffa', playerCount > 2);
@@ -90,8 +100,8 @@
       ...message.chats.map(chat => ({tick:chat.tick, text:`${message.players[chat.player]}: ${chat.text}`})),
       ...message.events,
     ].sort((a, b) => a.tick - b.tick).slice(-128);
-    $('chat-messages').replaceChildren(...[...publicMessages.map(entry => entry.text),
-      ...privateMessages.map(text => `[Private] ${text}`)].map(text => {
+    chatLines = [...publicMessages.map(entry => entry.text), ...privateMessages.map(text => `[Private] ${text}`)];
+    $('chat-messages').replaceChildren(...chatLines.map(text => {
         const item = document.createElement('li'); item.textContent = text; return item;
       }));
     $('chat-panel').hidden = false;
@@ -107,6 +117,7 @@
     return `${Math.floor(tick / 2)}${tick % 2 ? '.' : ''}`;
   }
   function scoreboard(turn, army, land, eliminatedPlayers = [], kills = []) {
+    publicArmy = army; publicLand = land; alive = playerNames.map((_, i) => !eliminatedPlayers[i]);
     $('turn').textContent = displayTurn(turn);
     $('turn').dataset.tick = turn;
     for (let i = 0; i < playerCount; i++) {
@@ -151,10 +162,12 @@
   }
   function draw() {
     if (!board) return;
-    renderer.draw(board, selected, queue.map(item => item.action), inFlight?.action);
+    if (nativePlayer) publishLive();
+    else renderer.draw(board, selected, queue.map(item => item.action), inFlight?.action);
     $('queue-count').textContent = `${queue.length} queued`;
     updateBuildControl();
-    $('cover').hidden = !$('cover').classList.contains('winner'); ready();
+    $('cover').hidden = !$('cover').classList.contains('winner');
+    if (!nativePlayer) ready();
   }
   function send(action, automatic = false) {
     if (!ws || ws.readyState !== WebSocket.OPEN || sent || currentTurn < 0) return false;
@@ -230,7 +243,7 @@
   document.querySelectorAll('[data-direction]').forEach(button => {
     button.onclick = () => move(Number(button.dataset.direction));
   });
-  $('split').onclick = () => { half = !half; $('split').setAttribute('aria-pressed', String(half)); };
+  $('split').onclick = () => { half = !half; $('split').setAttribute('aria-pressed', String(half)); draw(); };
   $('pass').onclick = () => enqueue([1,0,0,0,0]);
   $('surrender').onclick = () => {
     if (!canQueue()) return;
@@ -268,7 +281,7 @@
   }
   function finishMatch(result, recording) {
     if (winnerTimer !== null || terminal) return;
-    terminal = true; sent = true;
+    terminal = true; sent = true; finished = true; winner = result.winner;
     clearTimeout(reconnectTimer); clearTimeout(passTimer);
     $('mode').textContent = 'FINISHED'; $('play-controls').hidden = true;
     status(outcome(result)); showWinner(result);
@@ -380,6 +393,7 @@
     if (load !== replayLoad) return;
     if (data instanceof Uint8Array && new TextDecoder().decode(data.subarray(0, 'POLYWORLDREPLAY'.length)) === 'POLYWORLDREPLAY') {
       await prepareNativeReplay();
+      if (nativePlayer) nativePlayer.style.display = 'none';
       nativeReplayVisible = true;
       nativeReplay.style.display = 'block';
       nativeReplay.contentWindow.postMessage({type:'polyworld-replay-data', replay:data}, location.origin);
@@ -443,8 +457,74 @@
     for (const route of obstructedRoutes) stopRoute(route, 'an obstacle blocks the route');
     dispatchQueue();
   }
+  function publishLive() {
+    if (!nativePlayer || !board || slot === null) return;
+    const width = board.type_grid[0].length;
+    const index = tile => tile ? tile[0] * width + tile[1] : -1;
+    const orders = [...(inFlight ? [inFlight] : []), ...queue].filter(item => item.action[0] === 0).map(item => {
+      const [, r, c, direction, split] = item.action, [dr, dc] = moves[direction];
+      return {source:r * width + c, target:(r + dr) * width + c + dc, half:!!split};
+    });
+    nativePlayer.contentWindow.postMessage({type:'polyworld-live-state', state:{
+      width, height:board.type_grid.length, slot, tick:currentTurn,
+      types:board.type_grid, owners:board.owner_grid, armies:board.army_grid,
+      names:playerNames, skills:playerSkills, army:publicArmy, land:publicLand,
+      alive, selected:index(selected), half, orders, messages:chatLines,
+      status:liveStatus, ruleset, finished, winner,
+    }}, location.origin);
+  }
+  function prepareNativePlayer() {
+    if (nativePlayerReady) return nativePlayerReady;
+    nativePlayer = document.createElement('iframe');
+    nativePlayer.id = 'polyworld-player'; nativePlayer.title = 'Polyworld Generals live game';
+    nativePlayer.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:0;z-index:99';
+    nativePlayerReady = new Promise(resolve => {
+      window.addEventListener('message', event => {
+        if (event.source !== nativePlayer.contentWindow || event.origin !== location.origin) return;
+        if (event.data?.src === 'coworld-replay') {
+          if (event.data.type === 'phase' && event.data.phase === 'live_ready') resolve();
+          if (event.data.type === 'error') fail(event.data.message);
+          if (event.data.type === 'ready') { ready(); nativePlayer.contentWindow.focus(); }
+          return;
+        }
+        if (event.data?.type !== 'polyworld-live-input' || !canQueue()) return;
+        const input = event.data.input;
+        if (input.kind === 'move') {
+          const savedHalf = half; half ||= input.half; move(input.value); half = savedHalf; draw();
+        } else if (input.kind === 'tile') {
+          const width = board.type_grid[0].length;
+          const r = Math.floor(input.value / width), c = input.value % width;
+          if (selected) {
+            const dr = r-selected[0], dc = c-selected[1];
+            if (Math.abs(dr)+Math.abs(dc) === 1) { move(dr < 0 ? 0 : dr > 0 ? 1 : dc < 0 ? 2 : 3); return; }
+          }
+          if (board.owner_grid[r][c] === slot+1) selectTile([r,c]);
+          draw();
+        } else if (input.kind === 'general') {
+          board.type_grid.forEach((row, r) => row.forEach((kind, c) => {
+            if (kind === 4 && board.owner_grid[r][c] === slot+1) selectTile([r,c]);
+          })); draw();
+        } else if (input.kind === 'chat') {
+          $('chat-target').value = String(input.value);
+          $('chat-text').value = input.text; $('chat-form').requestSubmit();
+        } else {
+          const controls = {split:'split', undo:'undo', clear:'clear', build:'build',
+            deselect:'deselect', pass:'pass', surrender:'surrender'};
+          const id = controls[input.kind];
+          if (id) $(id)?.click();
+        }
+      });
+    });
+    nativePlayer.src = livePrefix + '/client/polyworld/live.html';
+    document.body.append(nativePlayer);
+    return nativePlayerReady;
+  }
   async function connectLive() {
-    if (document.querySelector('meta[name="generals-engine"]')?.content === 'polyworld') await prepareNativeReplay();
+    if (polyworld) {
+      const preparation = [prepareNativeReplay()];
+      if (location.pathname.endsWith('/client/player')) preparation.push(prepareNativePlayer());
+      await Promise.all(preparation);
+    }
     const isPlayer = location.pathname.endsWith('/client/player');
     const route = livePrefix + (isPlayer ? '/player' : '/global');
     const address = params.get('address');
@@ -465,7 +545,8 @@
     ws = new WebSocket(url);
     ws.onopen = () => {
       ws.send(JSON.stringify({type:'subscribe', replay:true}));
-      $('mode').textContent = isPlayer ? 'PLAYER' : 'LIVE'; status('Waiting for all players.');
+      $('mode').textContent = isPlayer ? 'PLAYER' : 'LIVE';
+      status(isPlayer && board ? 'Reconnected. Queued moves cleared.' : 'Waiting for all players.');
     };
     ws.onmessage = event => {
       try {

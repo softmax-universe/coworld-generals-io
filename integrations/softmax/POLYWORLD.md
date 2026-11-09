@@ -53,8 +53,11 @@ process boundary sends seeds as decimal text to preserve their exact value.
 Map generator version 3 uses SplitMix64 with identical native and WebAssembly
 arithmetic. Map dimensions,
 layouts and seeds differ from the former JAX generator. This release does not
-claim official map parity. Human seats retain the browser player client. Completed
-matches use the actual Polyworld Silky viewer compiled to WebAssembly.
+claim official map parity. Human seats and completed matches use the actual Polyworld Silky renderer
+compiled to WebAssembly. The browser transport owns authentication, deadlines
+and the action queue. It sends only that seat’s fog-filtered observation, public
+army/land totals, roster and skill snapshot to the renderer. The live renderer
+never runs a second simulation or offers replay point-of-view controls.
 The native desktop application remains available under `polyworld/`.
 Hosted variants still support two through eight seats, the same sixteen variant
 IDs, all three leagues, both player artifact kinds and human seats.
@@ -105,7 +108,13 @@ metadata plus the final fingerprint. `--encode-replay` converts a command log
 from stdin into binary stdout; it is the game's serialization boundary, not an
 extra persisted JSON artifact. Results and diagnostic HTTP frames remain JSON.
 
-The server preloads the native replay bundle before joining browser seats.
+The browser preloads the native replay bundle before joining browser seats.
+Human play starts the same bundle through `live.html`, with a typed display
+snapshot and origin/source-checked input messages. Both entry points share
+`generals.js`, WebAssembly, assets, board rendering, scoreboard and chat.
+Live mouse and keyboard input returns to the existing transport’s single queue.
+After reconnect, the next authoritative observation restores the display;
+queued orders are cleared. The server alone advances turns.
 After completion, it sends the saved tape over the established socket. The
 preloaded viewer receives it through a parent/origin-checked message, so replay
 controls and download keep working after the hosted HTTP proxy retires.
@@ -132,3 +141,31 @@ configuration value, then sends it to player handshakes, observations, and spect
 The value is fixed for the match. Native offline replays retain that snapshot;
 platform replay pages may overlay the current standings. Neither affects engine
 state, action resolution, hashes, or episode scores.
+
+## Human lobbies against league leaders
+
+Use the current FFA leaderboard and champion memberships, rather than the local
+Expander fixture:
+
+```sh
+# Read and print the exact seven opponents without creating a session:
+python -m integrations.softmax.play_leaders --elevated
+# After publishing/certifying this tree, use that exact release ID:
+python -m integrations.softmax.play_leaders --elevated --create --coworld-id COWORLD_ID
+```
+
+`--elevated` requires authorized team access. The launcher creates a casual
+`ffa-8-human` lobby, keeps seat 0 human, assigns seats 1–7 to the top seven
+players’ current champion policy versions, and reads every assignment back.
+It never substitutes bundled bots or skips an inaccessible leader. Creation
+stops on a failed request or roster mismatch. The printed lobby is ready for
+joining and starting; the launcher does not auto-start it or affect league ranks.
+
+`local --human` requires explicit `--bundled-bots` unless every opponent has an
+explicit BASIC file. Those seats display `Bundled Expander` names. Local smoke
+results do not establish strength against league participants.
+
+Hosted live play also requires the platform proxy to serve `.html`, `.wasm`
+and `.data` assets. The related platform fix is
+[Softmax PR 31216](https://app.graphite.dev/github/pr/softmax-universe/softmax/31216).
+Pushing this repository does not deploy either the game or that platform fix.

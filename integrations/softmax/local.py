@@ -28,6 +28,8 @@ def main():
     parser.add_argument("--variant", choices=("competition", "ffa", "castles"), default="competition")
     parser.add_argument("--players", type=int, choices=range(3, 9), default=4, help="FFA seats (default: 4)")
     parser.add_argument("--human", action="store_true", help="control slot 0 in the browser")
+    parser.add_argument("--bundled-bots", action="store_true",
+                        help="explicitly use bundled Expander opponents instead of league leaders")
     parser.add_argument(
         "--basic",
         action="append",
@@ -52,8 +54,12 @@ def main():
         if args.human and int(slot) == 0:
             parser.error("human slot 0 cannot also execute a BASIC file")
         basic[int(slot)] = Path(path).resolve()
+    if args.human and len(basic) < count - 1 and not args.bundled_bots:
+        parser.error("local human play needs --bundled-bots or explicit --basic seats; "
+                     "use python -m integrations.softmax.play_leaders for leaderboard lobbies")
     tokens = [secrets.token_urlsafe(24) for _ in range(count)]
-    names = PLAYER_NAMES[:count]
+    names = [basic[slot].stem if slot in basic else f"Bundled Expander {slot}"
+             for slot in range(count)] if args.human else PLAYER_NAMES[:count]
     config = {
         "tokens": tokens,
         "players": [{"name": "You" if args.human and slot == 0 else name} for slot, name in enumerate(names)],
