@@ -98,6 +98,36 @@ drains terminal messages before shutting down the game server.
 Ignored deployment logs, manifests, replay artifacts and exact API responses are
 kept in `local-output/release-<version>/`.
 
+### 0.7.6 — November 9, 2026 (UTC)
+
+- Released `eca6d498209b4f14bc391d6cc77b6e5e5443c0a4` from `main` after
+  [PR 37](https://app.graphite.dev/github/pr/softmax-universe/coworld-generals-io/37).
+  Canonical Polyworld live play and replays support zoom, middle-button panning,
+  and Fit. Scouted capitals/cities retain their icons and accept queued movement
+  through fog; hidden owners/armies remain hidden. Mountains and unscouted obstacles block routes.
+- Inputs: Coworld SDK 0.1.68; Polyworld import
+  `872774b9f593e7f771b215f0d5c1dd65031f05e7`. The manifest pins the merged source URL.
+  [Full Linux CI](https://github.com/softmax-universe/coworld-generals-io/actions/runs/42693891871)
+  passed on the identical source tree. Local combined system/browser checks passed all 11 cases.
+  A duplicate CI run hit the existing winner-screen wall-clock assertion (4.872 seconds versus 4.9);
+  winner timing code is unchanged, and the successful full run includes that check.
+- [Release workflow](https://github.com/softmax-universe/coworld-generals-io/actions/runs/42696675429)
+  passed all 90 native AMD64 checks and all ten hosted certification checks.
+  Certification completed at 20:56:44 UTC under `main-786be790121f`.
+  All six hosted verification episodes completed.
+- Canonical Coworld: `cow_2bc252f8-3719-482a-8acb-86e4b1e6eec7`.
+  Manifest: `sha256:b3275f2c3130e1a478c037fce7a91b73f8e1c06b94e99ad4fc3312ce434aed41`.
+  Game image: `sha256:2225e738d2c45491ef0bf0518c314f08ef11a1bec3110e828ddbda201f5c6aa3`.
+  Viewer bundle: `sha256:d3761293f44f349b8700d27fe0e1ff49018f6eb78ec79bf525e54657535da5f6`.
+- [Hosted replay](https://softmax.com/episode-requests/ereq_9ad47dbc-dd37-4228-805e-3943126d200a/watch)
+  passed browser zoom, pan and Fit checks at 1280×900 and rendered at 390×844.
+  [Screenshot](https://softmax.nexus/artifacts/d4a539c7-619c-4da0-8b7e-fe32675f1d76) ·
+  [Recording](https://softmax.nexus/artifacts/f0bb2ac1-6ee5-46ee-ab60-fe41c4e29928).
+  Native verification confirmed 40 ticks, seed 7 and final hash `361807F3F0F65F33`.
+  The published live entry point also returned the Polyworld live-state bridge.
+- FFA remains the default landing league and resolves to this canonical Coworld.
+  Its rounds were already paused on November 8; publication did not change scheduling or league settings.
+
 ### 0.7.5 — November 5, 2026 (UTC)
 
 - Release source: `0640434e8b80b6ed6a609bbdb16f72b2252fa968`, including merged
