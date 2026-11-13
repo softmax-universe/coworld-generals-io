@@ -24,9 +24,10 @@ reflect the release readbacks recorded here; source `main` can contain later cha
 | `human`, `ffa-human`, `castles-human` | 2, 4, 2 | Corresponding rules, 500 ms minimum tick and 1 s deadline | 1,200 |
 | `ffa-3-human`, `ffa-5-human` through `ffa-8-human` | 3, 5–8 | Corresponding paced FFA | 1,200 |
 
-Human variants keep 1,200 turns: at two turns per second, 2,000 turns would take
-at least 17 minutes and risk Softmax's 20-minute hosted episode deadline. Every
-mode disables Deathtouch and resolves moves in generals.io's order (see README).
+Human variants keep their existing 1,200-turn limit. The manifest's hosted
+episode ceiling is 600 minutes to accommodate full-length bot FFA; see the
+budget calculation in README. Every mode disables Deathtouch and resolves moves
+in generals.io's order.
 FFA uses Survival ordering: a kill or win qualifies a player for the upper
 partition, then each partition sorts by reverse elimination order. Caps
 adjudicate remaining players by army, land, and seat rather than drawing.
@@ -97,6 +98,28 @@ drains terminal messages before shutting down the game server.
 
 Ignored deployment logs, manifests, replay artifacts and exact API responses are
 kept in `local-output/release-<version>/`.
+
+### 0.7.7 — November 13, 2026 (UTC)
+
+- Released source `e95cb2e8a1ad02c153b09f749e62a283ab532ea3` from
+  [PR 40](https://app.graphite.dev/github/pr/softmax-universe/coworld-generals-io/40).
+  The explicit 600-minute episode ceiling covers the unchanged full FFA rules
+  and existing player budgets. It replaces the implicit 20-minute limit that
+  timed out FFA rounds 4998–5000 and exhausted scheduler retries.
+- Includes the merged viewer Docker source-copy fix from PR 38.
+  [Release run 43528663049](https://github.com/softmax-universe/coworld-generals-io/actions/runs/43528663049)
+  built amd64 images, passed all nine local certification fixtures, uploaded,
+  and passed hosted certification. Canonical Coworld:
+  `cow_3b6d962a-90ec-4636-808d-54fb120dee47`; hosted certification job:
+  `5cca65ca-6fb7-4e1f-aadb-7a60696da72b` (10/10 checks).
+- Local verification: five native engine suites, 209 Python tests across
+  16 modules, six Polyworld system checks, native arm64 certification (10/10),
+  and Chrome live-to-replay against the rebuilt viewer. The full eight-seat,
+  seed-7 FFA reached tick 50,002 in 172 seconds, with zero timeouts and saved replay/results.
+- Resumed FFA, Classic, and Build after verifying the certified canonical
+  version and their existing automatic-failure pause reasons. Fresh rounds
+  5002, 2115, and 4785 were scheduled. Final round outcomes require separate
+  verification; successful certification alone does not establish league recovery.
 
 ### 0.7.6 — November 9, 2026 (UTC)
 

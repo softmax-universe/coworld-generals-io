@@ -226,6 +226,14 @@ transport misses do not trigger the old 20-miss elimination. At tick 121, a
 player needs 11 land, an owned city, or visible contact with an opponent to
 avoid the official initial inactivity kick. Warnings begin at tick 99.
 
+The manifest sets a 600-minute hosted episode ceiling. A full FFA permits
+50,002 decisions at 500 ms each (417 minutes), plus up to eight BASIC workers
+with 1,200 CPU seconds each (160 minutes), startup, and replay publication.
+This ceiling replaces the platform's 20-minute default; it does not pace games
+or change their tick limits, scoring, or per-player budgets. Fast players
+still complete without waiting for the ceiling. Certification keeps its
+separate, short local timeout.
+
 FFA players can send `{"type":"surrender"}`. Disconnecting
 also surrenders the seat. Its moves stop immediately, but its land and general
 remain owned, grow normally, and can be captured for 50 more ticks. At the
