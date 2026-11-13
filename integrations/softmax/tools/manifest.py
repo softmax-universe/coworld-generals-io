@@ -58,6 +58,9 @@ def template():
     players = [{"name": "Red"}, {"name": "Blue"}]
     return {
         "$schema": "https://raw.githubusercontent.com/Metta-AI/coworld/main/src/coworld/coworld_manifest_schema.json",
+        # Full FFA permits 50,002 half-second decisions plus eight BASIC workers'
+        # 1,200 CPU-second budgets. Include startup and artifact publication.
+        "episode_timeout_minutes": 600,
         "tags": ["strategy", "1v1", "ffa", "fog-of-war", "territory-control"],
         "game": {
             "player_runtime": ["platform-hosted", "game-hosted"],
