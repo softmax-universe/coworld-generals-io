@@ -2,7 +2,7 @@
 
 import os
 import subprocess
-from typing import Literal
+from typing import Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -75,7 +75,7 @@ class MessageReply(BaseModel):
 
 
 class PolicyMessages:
-    def __init__(self, names: list[str]):
+    def __init__(self, names: list[str], record_chat: Callable[[PublicChat], None] | None = None):
         self.process = subprocess.Popen(
             [os.environ.get("GENERALS_BASIC_WORKER", "/usr/local/bin/generals-basic"), "--messages"],
             stdin=subprocess.PIPE,
@@ -83,6 +83,7 @@ class PolicyMessages:
             text=True,
         )
         self.chats: list[PublicChat] = []
+        self.record_chat = record_chat
         self.recent_chats: list[PublicChat] = []
         self.events: list[PublicEvent] = []
         self.mailboxes = [Mailbox() for _ in names]
@@ -94,8 +95,13 @@ class PolicyMessages:
         reply = MessageReply.model_validate_json(self.process.stdout.readline())
         for update in reply.mailboxes:
             self.mailboxes[update.slot] = update.mailbox
-        # The same bound as upstream ReplayMessages; private inboxes never enter it.
-        self.chats.extend(reply.chats[:16384 - len(self.chats)])
+        # Native replays append admitted public chat directly to their action stream.
+        # The separately selectable JAX renderer retains its own JSON history.
+        if self.record_chat is not None:
+            for chat in reply.chats:
+                self.record_chat(chat)
+        else:
+            self.chats.extend(reply.chats[:16384 - len(self.chats)])
         self.recent_chats = (self.recent_chats + reply.chats)[-128:]
         self.events = (self.events + reply.events)[-128:]
         return reply

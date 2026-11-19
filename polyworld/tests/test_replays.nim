@@ -1,10 +1,10 @@
 import
   std/[os, strutils],
   flatty,
-  ../src/generals/[bots, common, players, replays, worlds]
+  ../src/generals/[bots, common, events, players, replays, worlds]
 
 type CompactTestData = ActionTape[
-  ReplaySetup, uint32, ReplayMessages, Config
+  ReplaySetup, uint32, void, Config
 ]
 
 template expectReplayError(body: untyped) =
@@ -198,7 +198,8 @@ block:
     (3'u32 shl 12) or (1'u32 shl 14) or (9'u32 shl 15))
   doAssert wire.encoded().decodeReplay() == data
   doAssert data.encodeReplay().len ==
-    encodeReplayFile(ReplayGame, ReplayGameVersion, data).len - 80 * 28
+    encodeReplayFile(ReplayGame, ReplayGameVersion, data).len -
+      80 * (data.actions[0].toFlatty().len - 4)
 
 echo "Testing the largest supported source cell and idle tick gaps"
 block:
@@ -399,56 +400,27 @@ block:
   var empty = newReplayRecorder(newWorld(sample.config)).data
   let
     emptyBytes = empty.encodeReplay()
-    actionLengthOffset = emptyBytes.len - 24
+    actionLengthOffset = emptyBytes.len - 16
   var malformed = emptyBytes
   for i in 0 ..< 8:
     malformed[actionLengthOffset + i] = char(255)
   expectReplayError:
     discard decodeReplay(malformed)
 
-echo "Testing chat allocation bounds before decoding untrusted metadata"
+echo "Testing inline chat bounds before decoding untrusted words"
 block:
-  for count in [-1, MaxReplayChats + 1, 1_000_000]:
-    let payload = count.toFlatty() & newString(max(0, count))
-    var
-      decoded: ReplayMessages
-      position = 0
-      failure: string
-    try:
-      payload.fromFlatty(position, decoded)
-    except GeneralsError as error:
-      failure = error.msg
-    doAssert failure.contains("decoded chat count exceeds")
-    doAssert decoded.chats.len == 0
-  var
-    decoded: ReplayMessages
-    position = 0
-  expectReplayError:
-    MaxReplayChats.toFlatty().fromFlatty(position, decoded)
-  doAssert decoded.chats.len == 0
-  let
-    oversized = ReplayMessages(chats: @[
-      ReplayChat(tick: 0, player: 0, text: "x".repeat(561))
-    ])
-    payload = oversized.toFlatty()
-  position = 0
-  var failure: string
-  try:
-    payload.fromFlatty(position, decoded)
-  except GeneralsError as error:
-    failure = error.msg
-  doAssert failure.contains("decoded chat text exceeds the byte limit")
-  doAssert decoded.chats.len == 1 and decoded.chats[0].text.len == 0
-  let
-    empty = newReplayRecorder(newWorld(sample.config)).data.encodeReplay()
-    malicious = empty[0 ..< empty.len - 8] &
-      1_000_000.toFlatty() & newString(1_000_000)
-  failure = ""
-  try:
-    discard malicious.decodeReplay()
-  except GeneralsError as error:
-    failure = error.msg
-  doAssert failure.contains("decoded chat count exceeds")
+  let original = newReplayRecorder(newWorld(sample.config)).data.compact()
+  for size in [0'u32, 561'u32, uint32.high]:
+    var malformed = original
+    malformed.actions = @[uint32.high - 1, 0'u32, 0'u32, size]
+    expectReplayError:
+      discard malformed.encoded().decodeReplay()
+  for count in 1 .. 4:
+    var malformed = original
+    malformed.actions = @[uint32.high - 1, 0'u32, 0'u32, 4'u32]
+    malformed.actions.setLen(count)
+    expectReplayError:
+      discard malformed.encoded().decodeReplay()
 
 echo "Testing game and tape versions and malformed action metadata"
 block:
@@ -626,22 +598,39 @@ block:
   recorder.recordTick(world, [noMove(), noMove()])
   let expectedHash = world.stateHash()
   doAssert recorder.recordChat(1, 1, "Good game")
+  doAssert recorder.recordChat(1, 1, "Good game")
   doAssert recorder.recordChat(0, 1, "🌟".repeat(140))
   let data = recorder.data.encodeReplay().decodeReplay()
-  doAssert data.metrics.chats == recorder.data.metrics.chats
-  doAssert data.metrics.chats[0] == ReplayChat(
+  doAssert data.actions == recorder.data.actions
+  doAssert data.actions[0] == ReplayAction(kind: ChatAction,
     tick: 0,
     player: 0,
     text: "Ready 🌟"
   )
-  doAssert data.actions.len == 0
+  doAssert data.actions.len == 4
   doAssert data.hashes == @[expectedHash]
   let player = newReplayPlayer(data)
   var
     replay = newReplayWorld(data)
     moves: array[MaxPlayers, Move]
-  doAssert player.replayTick(replay, moves)
+    log: MatchLog
+  log.resetLog()
+  player.replayInitial(log)
+  doAssert log.entries.len == 2
+  doAssert log.entries[1].text == "Ready 🌟"
+  doAssert player.replayTick(replay, moves, log)
   doAssert replay == world
+  let transcript = log.entries
+  doAssert transcript[^3].text == "Good game"
+  doAssert transcript[^2].text == "Good game"
+  replay = newReplayWorld(data)
+  player.actionIndex = 0
+  log.resetLog()
+  player.replayInitial(log)
+  doAssert player.replayTick(replay, moves, log)
+  doAssert log.entries == transcript
+  doAssert not player.replayTick(replay, moves, log)
+  doAssert log.entries == transcript
   for invalidText in [
     "", " leading", "trailing ", "two  spaces", "line\nbreak",
     "control\x01", "\xff", "\xed\xa0\x80", "\xf4\x90\x80\x80",
@@ -661,24 +650,24 @@ block:
     discard recorder.recordChat(0, 0, "Backward")
   let bytes = data.encodeReplay()
   var changed = bytes.decodeReplay()
-  changed.metrics.chats[0].player = 2
+  changed.actions[0].player = 2
   expectReplayError:
     discard newReplayPlayer(changed)
   changed = bytes.decodeReplay()
-  changed.metrics.chats[0].tick = 2
+  changed.actions[0].tick = 2
   expectReplayError:
     discard newReplayPlayer(changed)
   changed = bytes.decodeReplay()
-  changed.metrics.chats[1].tick = 0
-  changed.metrics.chats[0].tick = 1
+  changed.actions[1].tick = 0
+  changed.actions[0].tick = 1
   expectReplayError:
     discard newReplayPlayer(changed)
   changed = bytes.decodeReplay()
-  changed.metrics.chats[0].text = "bad\nchat"
+  changed.actions[0].text = "bad\nchat"
   expectReplayError:
     discard newReplayPlayer(changed)
   changed = bytes.decodeReplay()
-  changed.metrics.chats.setLen(MaxReplayChats + 1)
+  changed.actions.setLen(MaxReplayChats + 1)
   expectReplayError:
     discard newReplayPlayer(changed)
   var boundedWorld = newWorld(config)
@@ -686,12 +675,12 @@ block:
   for i in 0 ..< MaxReplayChats:
     doAssert bounded.recordChat(i mod 2, 0, "Public")
   doAssert not bounded.recordChat(0, 0, "Budget exhausted")
-  doAssert bounded.data.metrics.chats.len == MaxReplayChats
+  doAssert bounded.data.actions.len == MaxReplayChats
   boundedWorld.tick([noMove(), noMove()])
   bounded.recordTick(boundedWorld, [noMove(), noMove()])
   doAssert not bounded.recordChat(0, 1, "Still exhausted")
   let boundedData = bounded.data.encodeReplay().decodeReplay()
-  doAssert boundedData.metrics.chats.len == MaxReplayChats
+  doAssert boundedData.actions.len == MaxReplayChats
   doAssert boundedData.hashes.len == 1
   expectReplayError:
     discard bounded.recordChat(-1, 0, "Still invalid")
@@ -724,9 +713,9 @@ for count in 2 .. MaxPlayers:
     replayMoves: array[MaxPlayers, Move]
     lastPlayerActed = false
   doAssert data.header.setup.roster == roster
-  doAssert data.metrics.chats[0].player == int32(count - 1)
+  doAssert data.actions[0].player == uint32(count - 1)
   for action in data.actions:
-    if action.player == uint32(count - 1):
+    if action.kind == MoveAction and action.player == uint32(count - 1):
       lastPlayerActed = true
   doAssert lastPlayerActed
   while player.replayTick(replay, replayMoves):
@@ -739,7 +728,7 @@ for count in 2 .. MaxPlayers:
 
 echo "Testing old replay versions require their archived game build"
 block:
-  for version in 1'u16 .. 3'u16:
+  for version in 1'u16 ..< ReplayGameVersion:
     var old = sample
     old.header.formatVersion = version
     old.header.gameVersion = version

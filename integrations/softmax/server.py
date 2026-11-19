@@ -74,7 +74,9 @@ class Episode:
         self.failed = False
         self.file_players = load_file_players(self.num_players)
         self.file_slots = set(self.file_players.files) if self.file_players else set()
-        self.messages = PolicyMessages(self.names)
+        self.messages = PolicyMessages(
+            self.names, match.record_chat if match.engine_name == "polyworld" else None,
+        )
 
     def authorize(self, slot: str | None, token: str | None) -> int | None:
         if slot not in tuple(str(s) for s in range(self.num_players)) or token is None:
@@ -349,7 +351,8 @@ class Episode:
             "result": result,
         }
         replay["skill_scores"] = self.skill_scores
-        replay["chats"] = [chat.model_dump() for chat in self.messages.chats]
+        replay["chats"] = (self.match.replay_chats() if self.match.engine_name == "polyworld"
+                           else [chat.model_dump() for chat in self.messages.chats])
         replay["skill_label"] = (f"At match start: {self.config.player_ratings.league} "
                                  f"{self.config.player_ratings.label}. — = unrated."
                                  if self.config.player_ratings is not None else "Skill: unavailable for this replay.")

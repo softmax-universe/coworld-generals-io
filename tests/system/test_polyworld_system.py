@@ -63,7 +63,7 @@ def test_runner_seeds_reproduce_full_width_maps_and_binary_replays(tmp_path, mon
             assert recordings[-1] == path.read_bytes()
             inspected = inspect_native_replay(path)
             assert inspected["seed"] == str(seed)
-            assert inspected["game_version"] == 2 and inspected["turns"] == 4
+            assert inspected["game_version"] == 3 and inspected["turns"] == 4
             assert not (directory / "failure.json").exists()
         assert boards[0] == boards[1], f"seed {seed} generated different maps"
         assert recordings[0] == recordings[1], f"seed {seed} generated different recordings"
@@ -146,6 +146,70 @@ def test_polyworld_final_surrenders_persist_one_terminal_tick(tmp_path, inspect_
     assert [replay_frame(replay["frames"], i)["turn"] for i in range(2)] == [0, 1]
 
 
+def test_polyworld_replay_orders_public_chat_with_moves_and_excludes_private_mail(tmp_path, inspect_native_replay):
+    """Real socket traffic survives the broker, command tape and native decoder."""
+    if "GENERALS_POLYWORLD_ENGINE" not in os.environ:
+        pytest.skip("Compile polyworld_bridge.nim and set GENERALS_POLYWORLD_ENGINE")
+    config = GameConfig(tokens=["red", "blue", "green"],
+                        players=[{"name": name} for name in ("Red", "Blue", "Green")],
+                        seed=7, max_turns=3, turn_timeout_seconds=1)
+    artifacts = {key: (tmp_path / f"{key}.json").as_uri() for key in ("results", "replay", "failure")}
+    app = create_app(config, artifacts, engine="polyworld")
+    with TestClient(app) as client, ExitStack() as stack:
+        sockets = [stack.enter_context(client.websocket_connect(f"/player?slot={slot}&token={token}"))
+                   for slot, token in enumerate(config.tokens)]
+        for ws in sockets:
+            assert ws.receive_json()["type"] == "hello"
+        for turn in range(config.max_turns):
+            observations = [ws.receive_json() for ws in sockets]
+            assert all(observation["turn"] == turn for observation in observations)
+            if turn:
+                expected = ["Repeat.", "Repeat."] * turn
+                assert [chat["text"] for chat in observations[0]["chats"]] == expected
+                assert any(entry["text"].endswith("PRIVATE_ONLY")
+                           for entry in observations[0]["mailbox"]["messages"])
+                assert "PRIVATE_ONLY" not in json.dumps(observations[1]["mailbox"])
+            for slot, ws in enumerate(sockets):
+                ws.send_json({"type": "chat", "target": -2 if slot < 2 else 0,
+                              "text": "Repeat." if slot < 2 else "PRIVATE_ONLY"})
+                action = PASS
+                if slot == 0:
+                    observation = observations[slot]
+                    row, column = next((row, column)
+                                       for row, cells in enumerate(observation["type_grid"])
+                                       for column, kind in enumerate(cells)
+                                       if kind == 4 and observation["owner_grid"][row][column] == 1)
+                    direction = 3 if column + 1 < observation["width"] else 2
+                    action = [0, row, column, direction, 0]
+                ws.send_json({"type": "action", "turn": turn, "action": action})
+        result = sockets[0].receive_json()["result"]
+        assert result["turns"] == 3 and result["timeouts"] == [0, 0, 0]
+        diagnostic = client.get("/replay.json").json()
+        recording = app.state.episode.match.recording
+        assert app.state.episode.messages.chats == []
+        for tick, commands in enumerate(recording[1:], 1):
+            assert commands[0].command.op == "step"
+            assert [event.command.op for event in commands[-2:]] == ["chat", "chat"]
+            assert [event.command.player for event in commands if event.command.op == "chat"] == [0, 1]
+            assert all(event.command.tick == tick for event in commands if event.command.op == "chat")
+        assert "PRIVATE_ONLY" not in json.dumps(diagnostic)
+        assert client.get("/client/replay.data").content == (tmp_path / "replay.json").read_bytes()
+    tape = inspect_native_replay(tmp_path / "replay.json")
+    assert tape["game_version"] == 3
+    assert tape["chats"] == diagnostic["chats"] == [
+        {"tick": tick, "player": slot, "text": "Repeat."}
+        for tick in range(1, 4) for slot in (0, 1)
+    ]
+    assert tape["stream"] == [entry for tick in range(1, 4) for entry in (
+        {"kind": "move", "tick": tick, "player": 0, "text": ""},
+        {"kind": "chat", "tick": tick, "player": 0, "text": "Repeat."},
+        {"kind": "chat", "tick": tick, "player": 1, "text": "Repeat."},
+    )]
+    assert tape["actions"] == len(tape["stream"]) == 9
+    assert b"PRIVATE_ONLY" not in (tmp_path / "replay.json").read_bytes()
+    assert not (tmp_path / "failure.json").exists()
+
+
 @pytest.mark.parametrize("viewer", ["polyworld"], indirect=True)
 @pytest.mark.parametrize("variant,count,turns,seed", [
     ("ffa", 8, 80, (1 << 64) - 1),
@@ -183,7 +247,7 @@ def test_polyworld_tapes_verify_seek_and_reject_divergence(tmp_path, viewer, var
     recording = next((tmp_path / "episodes").glob("episode-*/game.replay"))
     tape = inspect_native_replay(recording)
     assert tape["format"] == "POLYWORLDREPLAY"
-    assert tape["seed"] == str(seed) and tape["game_version"] == 2
+    assert tape["seed"] == str(seed) and tape["game_version"] == 3
     assert json.loads((recording.parent / "results.json").read_text())["timeouts"] == [0] * count
     (bundle / "replay.gz").write_bytes(gzip.compress(recording.read_bytes()))
     scores = [-2.34, *([27.38] * (count - 2)), None]

@@ -42,9 +42,9 @@ hosted socket opponents. No separate hosted VM API is maintained.
 `messages.py` owns an episode-scoped broker process (`generals-basic --messages`)
 that runs the actual upstream `MessageHub`. BASIC, container and human seats
 share deferred delivery, normalization, inbox bounds and public game notices.
-Only each seat's inbox enters its worker/socket. Public chat enters the existing
-binary `ReplayMessages` section; private mail never enters recordings or
-spectator updates. The broker closes with the episode. Hosted BASIC keeps its
+Only each seat's inbox enters its worker/socket. Public chat enters the same ordered
+binary action stream as movement when the broker admits it; private mail never enters recordings or
+spectator updates. Public replay diagnostics derive chat from that stream. The broker closes with the episode. Hosted BASIC keeps its
 additional process sandbox, while containers keep platform-owned resources.
 
 The hosted game uses Polyworld's deterministic map generator. Hosted seeds retain

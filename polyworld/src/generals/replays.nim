@@ -11,14 +11,13 @@ export tapes
 
 const
   ReplayGame* = (when defined(softmaxReplay): "generals_hosted" else: "generals")
-  ReplayFormatVersion* = 4'u16
-  ReplayGameVersion* = (when defined(softmaxReplay): 2'u16 else: 5'u16)
+  ReplayFormatVersion* = 5'u16
+  ReplayGameVersion* = (when defined(softmaxReplay): 3'u16 else: 6'u16)
   ReplayMapVersion* = 3'u16
   MaxReplayTicks* = 100_000
-  MaxReplayActions* = MaxReplayTicks * MaxPlayers
+  MaxReplayActions* = MaxReplayTicks * MaxPlayers + 16_384
   MaxReplayChats* = 16_384
   MaxReplayBytes* = 64 * 1024 * 1024
-  ChatHeaderBytes = 16
   HalfFlag = 1'u32
   RawFlag = 2'u32
   BuildFlag = 4'u32
@@ -26,6 +25,8 @@ const
   MaximumTickDelta = 0x1fff'u32
   ExtendedAction = uint32.high
   ExtendedWords = 9
+  ChatWord = uint32.high - 1
+  ChatWords = 4
 
 type
   ReplaySetup* = object
@@ -39,53 +40,27 @@ type
       outcome*: string
       skillScores*: seq[string]
       skillLabel*: string
+  ReplayActionKind* = enum
+    MoveAction, ChatAction
   ReplayAction* = object
+    kind*: ReplayActionKind
+    text*: string
     tick*, player*, flags*: uint32
     source*, target*, row*, column*, direction*: int32
   ReplayChat* = object
     tick*: uint32
     player*: int32
     text*: string
-  ReplayMessages* = object
-    chats*: seq[ReplayChat]
-  ReplayData* = ActionTape[ReplaySetup, ReplayAction, ReplayMessages, Config]
-  ReplayRecorder* = TapeRecorder[
-    ReplaySetup, ReplayAction, ReplayMessages, Config
-  ]
-  ReplayPlayer* = TapePlayer[
-    ReplaySetup, ReplayAction, ReplayMessages, Config
-  ]
-  PackedData = ActionTape[ReplaySetup, uint32, ReplayMessages, Config]
+  ReplayData* = ActionTape[ReplaySetup, ReplayAction, void, Config]
+  ReplayRecorder* = ref object
+    data*: ReplayData
+    chatCount: int
+  ReplayPlayer* = TapePlayer[ReplaySetup, ReplayAction, void, Config]
+  PackedData = ActionTape[ReplaySetup, uint32, void, Config]
 
 proc fail(message: string) {.noreturn, raises: [GeneralsError].} =
   ## Raises an error at the Generals replay boundary.
   raise newException(GeneralsError, "Replay: " & message)
-
-proc fromFlatty*(
-    bytes: string,
-    position: var int,
-    messages: var ReplayMessages
-) {.raises: [GeneralsError].} =
-  ## Bounds chat counts and text bytes before Flatty can allocate them.
-  var count: int
-  bytes.fromFlatty(position, count)
-  if count < 0 or count > MaxReplayChats:
-    fail("decoded chat count exceeds the recording limit")
-  if position > bytes.len or
-    count > (bytes.len - position) div ChatHeaderBytes:
-      fail("decoded chat entries exceed the remaining payload")
-  messages.chats = newSeq[ReplayChat](count)
-  for chat in messages.chats.mitems:
-    bytes.fromFlatty(position, chat.tick)
-    bytes.fromFlatty(position, chat.player)
-    var textBytes: int
-    bytes.fromFlatty(position, textBytes)
-    if textBytes < 0 or textBytes > MaxChatCharacters * 4:
-      fail("decoded chat text exceeds the byte limit")
-    if position > bytes.len or textBytes > bytes.len - position:
-      fail("decoded chat text exceeds the remaining payload")
-    chat.text = bytes[position ..< position + textBytes]
-    position += textBytes
 
 proc stateHash*(world: World): uint64 {.raises: [].} =
   ## Hashes every authoritative field with portable Polyworld hashing.
@@ -117,6 +92,13 @@ proc validateAction(action: ReplayAction, players: int) {.
   ## Checks command metadata without rejecting ordinary illegal moves.
   if action.player >= uint32(players):
     fail("action references an unknown player")
+  if action.kind == ChatAction:
+    if action.flags != 0 or action.source != 0 or action.target != 0 or
+      action.row != 0 or action.column != 0 or action.direction != 0:
+        fail("chat contains move fields")
+    return
+  if action.text.len > 0:
+    fail("move contains chat text")
   if action.flags > HalfFlag + RawFlag and
       not (defined(softmaxReplay) and action.flags == BuildFlag):
     fail("action contains unsupported move flags")
@@ -233,37 +215,40 @@ proc validate(data: ReplayData): World {.raises: [GeneralsError].} =
     fail("generated map does not match its recorded fingerprint")
   if data.hashes.len > data.config.maxTurns:
     fail("hashes exceed the configured duration")
-  if data.actions.len > MaxReplayActions or
-    data.actions.len > data.hashes.len * data.config.players:
-      fail("action count exceeds the recorded duration")
+  if data.actions.len > MaxReplayActions:
+    fail("action count exceeds the recording limit")
   var
     lastTick = 0'u32
     players = 0'u32
+    chatCount = 0
+    chatStarted = false
   for action in data.actions:
     action.validateAction(data.config.players)
-    when defined(softmaxReplay):
-      if action.flags == BuildFlag and (not data.header.setup.building or
-          action.row notin 0 ..< data.config.height or action.column notin 0 ..< data.config.width):
-        fail("construction command is outside the building game")
-    if action.tick == 0 or action.tick > uint32(data.hashes.len):
-      fail("action is outside the recorded duration")
-    if action.tick < lastTick:
-      fail("actions move backward in time")
+    if action.tick < lastTick or action.tick > uint32(data.hashes.len):
+      fail("action is outside the ordered recording")
     if action.tick != lastTick:
       players = 0
-    let mask = 1'u32 shl action.player
-    if (players and mask) != 0:
-      fail("player has multiple commands in one tick")
-    players = players or mask
+      chatStarted = false
+    if action.kind == ChatAction:
+      ReplayChat(tick: action.tick, player: int32(action.player),
+        text: action.text).validateChat(data.config.players, data.hashes.len)
+      inc chatCount
+      if chatCount > MaxReplayChats:
+        fail("public chat exceeds the recording limit")
+      chatStarted = true
+    else:
+      if action.tick == 0 or chatStarted:
+        fail("moves must precede admitted chat in each completed tick")
+      when defined(softmaxReplay):
+        if action.flags == BuildFlag and (not data.header.setup.building or
+            action.row notin 0 ..< data.config.height or
+            action.column notin 0 ..< data.config.width):
+          fail("construction command is outside the building game")
+      let mask = 1'u32 shl action.player
+      if (players and mask) != 0:
+        fail("player has multiple commands in one tick")
+      players = players or mask
     lastTick = action.tick
-  if data.metrics.chats.len > MaxReplayChats:
-    fail("public chat exceeds the recording limit")
-  lastTick = 0
-  for chat in data.metrics.chats:
-    chat.validateChat(data.config.players, data.hashes.len)
-    if chat.tick < lastTick:
-      fail("chat messages move backward in time")
-    lastTick = chat.tick
 
 proc newReplayRecorder*(
     world: World,
@@ -336,12 +321,14 @@ proc recordChat*(
       fail("chat player or turn is outside the recorded match")
   let chat = ReplayChat(tick: uint32(turn), player: int32(player), text: text)
   chat.validateChat(recorder.data.config.players, recorder.data.hashes.len)
-  if recorder.data.metrics.chats.len > 0 and
-    chat.tick < recorder.data.metrics.chats[^1].tick:
+  if recorder.data.actions.len > 0 and
+    chat.tick < recorder.data.actions[^1].tick:
       fail("chat messages move backward in time")
-  if recorder.data.metrics.chats.len >= MaxReplayChats:
+  if recorder.chatCount >= MaxReplayChats:
     return false
-  recorder.data.metrics.chats.add(chat)
+  recorder.data.actions.add ReplayAction(kind: ChatAction, tick: chat.tick,
+    player: uint32(player), text: text)
+  inc recorder.chatCount
   true
 
 proc newReplayWorld*(data: ReplayData): World =
@@ -356,10 +343,27 @@ proc newReplayPlayer*(data: ReplayData): ReplayPlayer =
     discard data.validate()
   initTapePlayer(data)
 
+proc replayChatsAt(player: ReplayPlayer, tick: uint32, log: var MatchLog) =
+  ## Dispatches admitted chat through the same cursor as game commands.
+  var action: ReplayAction
+  try:
+    while player.takeActionAt(tick, action):
+      if action.kind != ChatAction:
+        fail("unexpected move after the completed tick")
+      discard log.addChat(int(action.player), int(action.tick), action.text)
+  except ReplayError as error:
+    fail(error.msg)
+
+proc replayInitial*(player: ReplayPlayer, log: var MatchLog) =
+  ## Restores chat admitted before the first simulation tick.
+  if player != nil:
+    player.replayChatsAt(0, log)
+
 proc replayTick*(
     player: ReplayPlayer,
     world: var World,
-    moves: var array[MaxPlayers, Move]
+    moves: var array[MaxPlayers, Move],
+    log: var MatchLog
 ): bool =
   ## Applies the next recorded tick and rejects any simulation divergence.
   for move in moves.mitems:
@@ -370,18 +374,25 @@ proc replayTick*(
     fail("playback world does not match the recorded configuration")
   if world.turn > player.data.hashes.len:
     fail("playback world is past the recorded duration")
+  if world.turn == 0:
+    player.replayInitial(log)
   if world.turn == player.data.hashes.len:
     return false
   when not defined(softmaxReplay):
     if world.finished:
       fail("simulation ended before the recorded duration")
-  let tick = uint32(world.turn + 1)
+  let
+    tick = uint32(world.turn + 1)
+    before = snapshotEvents(world)
   when defined(softmaxReplay):
     var actions = newSeq[HostedAction](world.config.players)
     for action in actions.mitems:
       action[0] = 1
     var recorded: ReplayAction
-    while player.takeActionAt(tick, recorded):
+    while player.actionIndex < player.data.actions.len and
+      player.data.actions[player.actionIndex].kind == MoveAction:
+      if not player.takeActionAt(tick, recorded):
+        break
       let slot = int(recorded.player)
       if recorded.flags == BuildFlag:
         actions[slot] = [2'i32, recorded.row, recorded.column, 0, 0]
@@ -411,7 +422,10 @@ proc replayTick*(
       action: ReplayAction
       players = 0'u32
     try:
-      while player.takeActionAt(tick, action):
+      while player.actionIndex < player.data.actions.len and
+        player.data.actions[player.actionIndex].kind == MoveAction:
+        if not player.takeActionAt(tick, action):
+          break
         action.validateAction(world.config.players)
         let mask = 1'u32 shl action.player
         if (players and mask) != 0:
@@ -424,7 +438,18 @@ proc replayTick*(
     if world.turn != int(tick) or
       world.stateHash() != player.data.hashes[int(tick) - 1]:
         fail("simulation diverged at tick " & $tick)
-    true
+    result = true
+  log.recordTick(before, world, moves.toOpenArray(0, world.config.players - 1))
+  player.replayChatsAt(tick, log)
+
+proc replayTick*(
+    player: ReplayPlayer,
+    world: var World,
+    moves: var array[MaxPlayers, Move]
+): bool =
+  ## Verifies one tick when callers do not need the derived event transcript.
+  var log: MatchLog
+  player.replayTick(world, moves, log)
 
 proc packedAction(
     action: ReplayAction,
@@ -432,7 +457,8 @@ proc packedAction(
     config: Config
 ): uint32 {.raises: [].} =
   ## Packs ordinary cardinal commands into one word or requests an escape.
-  if action.flags > HalfFlag or action.row != 0 or
+  if action.kind != MoveAction or
+    action.flags > HalfFlag or action.row != 0 or
     action.column != 0 or action.direction != 0 or
     action.tick < previous or action.tick - previous > MaximumTickDelta or
     action.source < 0 or action.target < 0 or
@@ -462,15 +488,23 @@ proc packActions(data: ReplayData): seq[uint32] {.raises: [].} =
   result = newSeqOfCap[uint32](data.actions.len)
   var previous = 0'u32
   for action in data.actions:
-    let packed = packedAction(action, previous, data.config)
-    result.add(packed)
-    if packed == ExtendedAction:
-      result.add([
-        action.tick, action.player, action.flags,
-        cast[uint32](action.source), cast[uint32](action.target),
-        cast[uint32](action.row), cast[uint32](action.column),
-        cast[uint32](action.direction)
-      ])
+    if action.kind == ChatAction:
+      result.add([ChatWord, action.tick, action.player, uint32(action.text.len)])
+      for start in countup(0, action.text.len - 1, 4):
+        var word = 0'u32
+        for offset in 0 ..< min(4, action.text.len - start):
+          word = word or (uint32(action.text[start + offset].ord) shl (offset * 8))
+        result.add(word)
+    else:
+      let packed = packedAction(action, previous, data.config)
+      result.add(packed)
+      if packed == ExtendedAction:
+        result.add([
+          action.tick, action.player, action.flags,
+          cast[uint32](action.source), cast[uint32](action.target),
+          cast[uint32](action.row), cast[uint32](action.column),
+          cast[uint32](action.direction)
+        ])
     previous = action.tick
 
 proc unpackActions(
@@ -483,14 +517,22 @@ proc unpackActions(
     config.players notin 2 .. MaxPlayers or
     config.maxTurns notin 1 .. MaxReplayTicks or ticks > config.maxTurns:
       fail("packed commands require bounded board dimensions and duration")
-  let limit = ticks * config.players
-  if words.len > limit * ExtendedWords:
+  let limit = ticks * config.players + MaxReplayChats
+  if words.len > ticks * config.players * ExtendedWords +
+    MaxReplayChats * (ChatWords + MaxChatCharacters):
     fail("packed action words exceed the recorded duration")
   var
     position = 0
     count = 0
   while position < words.len:
-    let span = if words[position] == ExtendedAction: ExtendedWords else: 1
+    var span = if words[position] == ExtendedAction: ExtendedWords else: 1
+    if words[position] == ChatWord:
+      if words.len - position < ChatWords:
+        fail("chat command header is truncated")
+      let size = words[position + 3]
+      if size == 0 or size > uint32(MaxChatCharacters * 4):
+        fail("decoded chat text exceeds the byte limit")
+      span = ChatWords + (int(size) + 3) div 4
     if words.len - position < span:
       fail("extended command is truncated")
     inc count
@@ -503,7 +545,15 @@ proc unpackActions(
   for action in result.mitems:
     let packed = words[position]
     inc position
-    if packed == ExtendedAction:
+    if packed == ChatWord:
+      let size = int(words[position + 2])
+      action = ReplayAction(kind: ChatAction, tick: words[position],
+        player: words[position + 1], text: newString(size))
+      position += ChatWords - 1
+      for i in 0 ..< size:
+        action.text[i] = char((words[position + i div 4] shr ((i mod 4) * 8)) and 255)
+      position += (size + 3) div 4
+    elif packed == ExtendedAction:
       action = ReplayAction(
         tick: words[position],
         player: words[position + 1],
@@ -546,8 +596,8 @@ proc unpackActions(
         source: source.int32,
         target: target.int32
       )
-    if action.tick == 0 or action.tick < previous or
-      action.tick > ticks.uint32:
+    if (action.kind == MoveAction and action.tick == 0) or
+      action.tick < previous or action.tick > ticks.uint32:
         fail("packed command tick is outside the ordered recording")
     action.validateAction(config.players)
     previous = action.tick
@@ -559,8 +609,7 @@ proc encodeReplay*(data: ReplayData): string {.raises: [GeneralsError].} =
     header: data.header,
     config: data.config,
     actions: data.packActions(),
-    hashes: data.hashes,
-    metrics: data.metrics
+    hashes: data.hashes
   )
   try:
     result = encodeReplayFile(
@@ -587,8 +636,7 @@ proc decodeReplay*(bytes: string): ReplayData {.raises: [GeneralsError].} =
       header: packed.header,
       config: packed.config,
       actions: unpackActions(packed.actions, packed.config, packed.hashes.len),
-      hashes: packed.hashes,
-      metrics: packed.metrics
+      hashes: packed.hashes
     )
     discard result.validate()
     if result.packActions() != packed.actions:
@@ -645,6 +693,9 @@ proc loadReplay*(path: string): ReplayData =
 when defined(softmaxReplay):
   proc encodeHostedReplay*(payload: JsonNode): string =
     ## Converts the process command log into upstream's packed action tape.
+    if payload["format"].getStr() != "polyworld-generals-hosted" or
+      payload["version"].getInt() != 2 or payload.hasKey("chats"):
+        fail("unsupported hosted command stream format")
     let ticks = payload["ticks"]
     let initial = ticks[0][0]["command"]
     var data: ReplayData
@@ -663,11 +714,6 @@ when defined(softmaxReplay):
       data.header.setup.skillScores.add(
         if score.kind == JNull: "—" else: formatFloat(score.getFloat(), ffDecimal, 1))
     data.header.setup.skillLabel = payload["skill_label"].getStr()
-    # Existing downloaded JSON tapes predate hosted chat.
-    if payload.hasKey("chats"):
-      for chat in payload["chats"].getElems():
-        data.metrics.chats.add ReplayChat(tick: chat["tick"].getInt().uint32,
-          player: chat["player"].getInt().int32, text: chat["text"].getStr())
     let winner = payload["result"]["winner"].getInt()
     data.header.setup.outcome = "Result: " &
       (if winner < 0: "draw" else: data.header.setup.roster.displayName(winner) & " won") &
@@ -703,6 +749,12 @@ when defined(softmaxReplay):
                 column: fields[2].getInt().int32)
             else:
               discard
+        of "chat":
+          if command["tick"].getInt() != tick:
+            fail("hosted chat does not match its admitted tick")
+          data.actions.add ReplayAction(kind: ChatAction, tick: tick.uint32,
+            player: command["player"].getInt().uint32,
+            text: command["text"].getStr())
         of "surrender", "neutralize":
           var recorded = HostedEvent(kind:
             if command["op"].getStr() == "surrender": SurrenderEvent else: NeutralizeEvent)

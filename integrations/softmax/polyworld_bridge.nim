@@ -15,13 +15,22 @@ if paramCount() == 2 and paramStr(1) == "--inspect-replay":
   var names: seq[string]
   for slot in 0 ..< data.config.players:
     names.add(data.header.setup.roster.displayName(slot))
+  var
+    chats = newJArray()
+    stream = newJArray()
+  for action in data.actions:
+    stream.add(%*{"kind": (if action.kind == ChatAction: "chat" else: "move"),
+      "tick": action.tick, "player": action.player, "text": action.text})
+    if action.kind == ChatAction:
+      chats.add(%*{"tick": action.tick, "player": action.player,
+        "text": action.text})
   stdout.writeLine($(%*{"format": ReplayMagic, "game": ReplayGame,
     "game_version": ReplayGameVersion, "turns": state.turn,
     "seed": $data.config.seed,
     "players": names, "skill_scores": data.header.setup.skillScores,
     "final_hash": state.hostedHash(),
     "first_hash": (if data.hashes.len > 0: data.hashes[0] else: data.header.setup.mapHash).toHex(16),
-    "actions": data.actions.len, "chats": data.metrics.chats}))
+    "actions": data.actions.len, "chats": chats, "stream": stream}))
   quit(0)
 
 var world: World

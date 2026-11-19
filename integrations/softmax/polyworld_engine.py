@@ -8,6 +8,7 @@ from typing import Literal
 import numpy as np
 from pydantic import BaseModel, ConfigDict
 
+from .messages import PublicChat
 from .protocol import VERSION
 
 
@@ -39,8 +40,16 @@ class EngineState(BaseModel):
     damage: list[list[int]]
 
 
+class ReplayChatCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    op: Literal["chat"] = "chat"
+    tick: int
+    player: int
+    text: str
+
+
 class EngineEvent(BaseModel):
-    command: EngineCommand
+    command: EngineCommand | ReplayChatCommand
     hash: str
 
 
@@ -67,6 +76,7 @@ class Match:
         self.last_build_executed = [None] * num_players
         self.commands: list[EngineEvent] = []
         self.recording: list[list[EngineEvent]] = []
+        self.recorded_chats = 0
         self.process = subprocess.Popen(
             [os.environ.get("GENERALS_POLYWORLD_ENGINE", "/usr/local/bin/generals-polyworld")],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
@@ -92,10 +102,28 @@ class Match:
             self.recording[-1].extend(self.commands)
         self.commands = []
 
+    def record_chat(self, chat: PublicChat):
+        """Append admitted public chat at its exact place among engine commands."""
+        if chat.tick != self.turn or not 0 <= chat.player < self.num_players:
+            raise ValueError("chat must belong to the current completed turn and a known player")
+        if self.recorded_chats >= 16384:
+            return
+        self.commands.append(EngineEvent(
+            command=ReplayChatCommand(**chat.model_dump()), hash=self.state.hash,
+        ))
+        self.recorded_chats += 1
+
+    def replay_chats(self) -> list[dict]:
+        """Derive the diagnostic transcript from the canonical recorded commands."""
+        return [event.command.model_dump(exclude={"op"})
+                for tick in self.recording for event in tick
+                if isinstance(event.command, ReplayChatCommand)]
+
     def replay(self, metadata: dict) -> bytes:
         assert not self.commands
-        recording = {**{key: value for key, value in metadata.items() if key not in ("frames", "format", "version")},
-                "format": "polyworld-generals-hosted", "version": 1,
+        recording = {**{key: value for key, value in metadata.items()
+                        if key not in ("frames", "format", "version", "chats")},
+                "format": "polyworld-generals-hosted", "version": 2,
                 "ticks": [[event.model_dump() for event in tick] for tick in self.recording]}
         return subprocess.run(
             [self.process.args[0], "--encode-replay"],

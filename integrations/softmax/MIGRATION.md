@@ -86,6 +86,39 @@ Run the imported version before changing rules. Validate complete local FFA,
 human play, standalone replay, container certification, and hosted operation.
 Record release-specific commands and outcomes here before publishing.
 
+### Ordered chat source validation — November 18, 2026
+
+- Source branch `replay/ordered-chat` starts from
+  `8b40ddce89de837ac806026ed3a1bfb1fc0270f7`. Standalone replay game version 6
+  and hosted game version 3 store public chat inline with moves. The tape
+  format is version 5; older readers remain with their published releases.
+- Dependency locks are unchanged. The complete native suite, hosted bridge
+  check and graphical check passed with all 29 exact locked revisions,
+  including Polyworld `552e7cd9f013de898e3cae3768260f4e6b3eca2b` and
+  Silky `3c5dd562924c044bfd4417331f82132fa0a0afdb`, using Nim 2.4.0 on macOS ARM64.
+- Seven real hosted system checks passed. The chat case sends actual player
+  socket traffic through the mailbox broker and binary codec, verifies ordered
+  move/chat/chat entries across three ticks, preserves identical messages, and
+  excludes private inbox text from public artifacts. The existing 16,384-message
+  recording budget and private-mail exclusion remain unchanged.
+- Three Chromium WASM cases passed for FFA8, FFA4 and castle building, including
+  desktop/mobile seeking and divergence rejection. A separate real chat tape
+  restored exactly six repeated messages through two end/start/end cycles,
+  with no duplicate or private text and no browser errors.
+- Local container build used Coworld SDK `0.1.68`, Nim `2.2.10`, Emscripten
+  `5.0.7`, ARM64, and validation-only version `0.0.0`. The generated manifest
+  and all eight release-workflow mode fixtures passed certification: 90/90
+  steps across the default mixed fixture, Classic, FFA3 through FFA8, and Build.
+  The mode fixtures use seed 7, 40 ticks, a 0.05-second interval, and one BASIC
+  player against Expander or Builder. No images or hosted release were uploaded.
+- Game image: `sha256:f42fd0f77a8959b6930fb7ae69dfe773059d1e3bad0062274ff47a6f7dc8501f`.
+  Player image: `sha256:7e99b2c9d25338aee2bccc62a19648ca6e737411c3754057ecd50d84c0ded5e6`.
+  Runtime patch SHA-256 against the source base:
+  `c4ef72db16e9613bf815c00006eb3e14010f667e63a35982f05885e1c70fc72c`.
+  This hashes `git diff --binary` for `messages.py`, `polyworld_bridge.nim`,
+  `polyworld_engine.py`, `server.py`, `generals/replays.nim` and
+  `generals/views.nim`, in that order, under their existing source directories.
+
 ### 0.7.1 preparation — November 3, 2026 (UTC)
 
 - Runtime source `cad29c1a671f50ec5b4ced146efdff8e71579c32` hides the final

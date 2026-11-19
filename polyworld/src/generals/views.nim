@@ -49,7 +49,6 @@ type
     botFiles: BotFiles
     brains: array[MaxPlayers, Brain]
     hub: MessageHub
-    replayChatIndex: int
     botScratch: BotScratch
     recording: ReplayRecorder
     replay: ReplayPlayer
@@ -438,28 +437,17 @@ proc syncReplay(view: View) =
     view.world.turn >= view.replay.data.hashes.len
   )
 
-proc replayChats(view: View) =
-  ## Restores public chat at its recorded tick without executing any bots.
-  let chats = view.replay.data.metrics.chats
-  while view.replayChatIndex < chats.len and
-    chats[view.replayChatIndex].tick <= uint32(view.world.turn):
-      let entry = chats[view.replayChatIndex]
-      discard view.log.addChat(entry.player.int, entry.tick.int, entry.text)
-      inc view.replayChatIndex
-      view.chatDirty = true
-
 proc resetReplay(view: View) =
   ## Reconstructs the seeded board and clears derived event history.
   view.replayEnded = false
   view.world = newReplayWorld(view.replay.data)
-  view.replay.syncCursor(0)
+  view.replay.actionIndex = 0
   view.log.resetLog()
   when defined(softmaxReplay):
     view.log.entries[0].text = view.replay.data.header.setup.skillLabel
   else:
     view.log.entries[0].text = "Replay events."
-  view.replayChatIndex = 0
-  view.replayChats()
+  view.replay.replayInitial(view.log)
   view.deathTurns = default(array[MaxPlayers, int])
   view.captor = -1
   view.chatScroll = 0
@@ -469,16 +457,9 @@ proc resetReplay(view: View) =
 
 proc advanceReplay(view: View) =
   ## Applies recorded commands through the same simulation and verifies state.
-  let before = snapshotEvents(view.world)
   var moves: array[MaxPlayers, Move]
-  if not view.replay.replayTick(view.world, moves):
+  if not view.replay.replayTick(view.world, moves, view.log):
     return
-  view.log.recordTick(
-    before,
-    view.world,
-    moves.toOpenArray(0, view.world.config.players - 1)
-  )
-  view.replayChats()
   for entry in view.log.entries:
     if entry.kind == Capture:
       view.deathTurns[entry.target] = entry.turn

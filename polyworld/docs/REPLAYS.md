@@ -5,7 +5,7 @@
 Generals uses the shared `POLYWORLDREPLAY` file envelope used by GotA and
 Galcon. Its Flatty payload uses Polyworld's `ActionTape`, like GotA. It
 stores the initial configuration, the map generator version and initial
-map hash, the public player roster and MMR values, submitted moves, public chat, and one state hash for
+map hash, the public player roster and MMR values, one ordered stream of submitted moves and public chat, and one state hash for
 every completed simulation tick.
 
 Playback regenerates the board from the recorded configuration and runs
@@ -61,13 +61,16 @@ The event log is rebuilt from the simulation as playback advances or seeks.
 Public chat is recorded at its displayed tick and restored when seeking or
 looping. Up to 16,384 public messages fit in a recording; later messages
 still reach the UI and mailboxes without stopping simulation recording.
-Direct messages, BASIC source, and bot file paths are not saved.
+Chat is appended after the moves for its admitted completed tick, including
+messages at tick zero. Playback and seeking consume the same action cursor;
+repeated identical messages remain separate actions. Direct messages, BASIC
+source, and bot file paths are not saved.
 
-The current game reads and writes game version 5 only. Earlier replay
+The current game reads and writes game version 6 only. Earlier replay
 versions belong to the archived game builds that created them. There is
 no conversion or older-format reader in this build.
 
-Version 5 retains the compact encoding introduced in version 4. It stores
+Version 6 records chat inline while retaining compact movement commands. It stores
 ordinary commands as one 32-bit word, instead of eight
 32-bit fields. The action tape contains a Flatty sequence of these words:
 
@@ -91,6 +94,11 @@ commands, rejected commands, unusual fields, and gaps over 8,191 ticks
 without changing their meaning. Ordinary valid army moves use the compact
 form. Decoding bounds the expanded action count before allocating it and
 rejects noncanonical encodings, invalid geometry, and truncated records.
+
+The reserved word `0xfffffffe` introduces a chat action containing the absolute
+tick, player, and UTF-8 byte count, followed by the text packed into little-endian
+32-bit words. Padding bytes are zero. Text is validated and bounded before
+allocation. There is no separate chat section or chat playback index.
 
 The configuration stores the full unsigned 64-bit seed. Map generator version
 3 uses SplitMix64, and this build rejects older game and map versions.

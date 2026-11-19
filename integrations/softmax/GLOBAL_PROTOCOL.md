@@ -25,10 +25,12 @@ The saved Polyworld replay uses upstream's `POLYWORLDREPLAY` binary container
 Ordinary moves occupy four bytes; passes need no action record. Extended words
 preserve construction and rejected commands without losing replay semantics.
 
-The versioned game identifier is `generals_hosted`, game version 2. Its typed
+The versioned game identifier is `generals_hosted`, game version 3. Its typed
 setup records the full unsigned 64-bit seed, generated dimensions, castle preset, public
 roster, match-start skill labels and final outcome. Small per-tick markers retain
-the order of steps, surrenders and delayed neutralization. Accepted public chat is stored in the tape's existing bounded ReplayMessages section.
+the order of steps, surrenders and delayed neutralization. Accepted public chat is stored inline in the same bounded action stream as moves,
+in admission order after the completed tick. Tick-zero messages and repeated
+text are retained. Playback and seeking use one cursor for movement and chat.
 No JSON command objects, board frames, private messages, policy source, private logs, credentials or upload URLs
 are persisted in the binary tape. Timeout counts and scoring remain in the
 separate authoritative results artifact.
@@ -42,7 +44,7 @@ as separate viewer metadata, leaving the downloaded replay bytes unchanged.
 `/replay.json` retains completed diagnostic frames for observation/scoring tools.
 Both return HTTP 409 during play.
 
-The standalone `generals` version 5 and older published JSON recordings
+The standalone `generals` version 6 and older published JSON recordings
 keep their own readers in their pinned releases. Hosted binary tapes add the
 castle/surrender rules without reinterpreting those historical formats.
 
