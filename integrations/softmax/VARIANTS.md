@@ -117,9 +117,12 @@ kept in `local-output/release-<version>/`.
   and Chrome live-to-replay against the rebuilt viewer. The full eight-seat,
   seed-7 FFA reached tick 50,002 in 172 seconds, with zero timeouts and saved replay/results.
 - Resumed FFA, Classic, and Build after verifying the certified canonical
-  version and their existing automatic-failure pause reasons. Fresh rounds
-  5002, 2115, and 4785 were scheduled. Final round outcomes require separate
-  verification; successful certification alone does not establish league recovery.
+  version and their existing automatic-failure pause reasons. Verification on
+  November 14 at 00:45 UTC confirmed FFA round 5002 completed all eight matches,
+  Classic round 2115 all 48, and Build round 4785 all 24, with zero failed jobs.
+  The final FFA match ran for 53 minutes 55 seconds, beyond the former cutoff, and
+  [completed successfully](https://softmax.com/episode-requests/ereq_cb82cd41-5f6b-43ca-915a-24ee4d18ec61/watch).
+  The public storefront showed "Last round: just now" without "rounds frozen".
 
 ### 0.7.6 — November 9, 2026 (UTC)
 
