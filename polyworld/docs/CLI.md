@@ -1,8 +1,8 @@
 # Command-line flags
 
-Generals accepts Polyworld's shared command-line flags, with Generals'
-half-second simulation ticks. Existing Generals equals-form flags remain
-supported.
+Generals uses Polyworld's shared command-line parser, with Generals'
+half-second simulation ticks. Every valued flag accepts `--flag VALUE`,
+`--flag=VALUE`, and `--flag:VALUE` with identical behavior.
 
 Play against one BASIC opponent:
 
@@ -37,7 +37,7 @@ select another one-based seat. Only one human is allowed, and a human
 requires the graphical client. Input, fog, chat, and the outcome screen
 follow that seat.
 
-`--bot PATH[:COUNT]` and `--bot:PATH[:COUNT]` add BASIC bot groups. Repeat
+`--bot PATH[:COUNT]` and its alias `--bots PATH[:COUNT]` add BASIC bot groups. Repeat
 the flag to combine policies. Bots fill seats in order, skipping the human.
 Without `--players` or an engine config, the roster size is inferred from
 the number of bots plus the human, and must be between 2 and 10. An explicit
@@ -48,11 +48,16 @@ whole board visible. Starting normally without bot groups keeps the local
 human-versus-native-bots game. `--player:10 --players 10` also works with
 native opponents.
 
-The existing `--bot=SEAT:PATH` form assigns one BASIC policy to a specific
+`--seat-bot SEAT:PATH` assigns one BASIC policy to a specific
 seat and leaves other seats using their existing native or human control.
 Use either grouped bots or per-seat CLI assignments in one invocation.
 A human seat cannot also have a bot. Grouped CLI bots replace config bot
 assignments while keeping supplied names and MMR values.
+
+`--name TEXT` sets the selected human seat's display name, including the
+default local human. It requires a human controller. `--seat-name SEAT:NAME`
+sets another roster entry, including a bot.
+Names and bot paths never change meaning based on the value separator.
 
 ## Shared flags
 
@@ -60,24 +65,25 @@ assignments while keeping supplied names and MMR values.
 | --- | --- |
 | `--replay PATH` | Play a recorded action tape, or verify it when headless. |
 | `--record PATH` | Save the live match as a Polyworld action tape. |
-| `--seed N` | Seed the generated map, from 0 to 18446744073709551615. |
+| `--seed N` | Set the shared signed 32-bit seed. Negative seeds retain their signed bits in the map's unsigned seed. |
 | `--ticks N` | Maximum simulation ticks, from 1 through 100000. |
 | `--seconds N` | Set the limit to `N × 2` ticks. |
 | `--minutes N` | Set the limit to `N × 120` ticks. |
 | `--play true\|false` | Start graphical simulation or replay playing or paused. |
-| `--speed N` | Initial graphical speed: 1, 2, 4, or 16. |
+| `--speed N` | Exact positive integer graphical speed; default 1. |
 | `--windowSize WxH` | Set the native window dimensions. |
 | `--screenshot PATH` | Save a native PNG screenshot and exit. |
 | `--frames N` | Render N frames before capture, default 30. |
 | `--vsync on\|off` | Enable or disable display synchronization. |
 | `--headless-tick-rate N` | Pace headless simulation or playback at N ticks per second; 0 is unlimited. |
-| `--llm-mode async\|barrier` | Shared scheduling selection. Both are equivalent for the current synchronous BASIC policies. |
+| `--mute`, `--unmute` | Accepted for portable launch commands; this client has no audio. |
 
-Split and equals forms are accepted, including `--seed=7`,
-`--replay=out/match.replay`, and `--play=false`. Polyworld's compact
-`--windowSize:800x400`, `--vsync:off`, `--headless-tick-rate:24`, and
-`--llm-mode:barrier` forms also work. Later duration flags replace earlier
-ones. Pacing never changes simulation ticks or recorded actions.
+All three value forms are accepted, including `--seed=7`,
+`--replay:out/match.replay`, and `--play false`. Later duration flags replace
+earlier ones. Pacing never changes simulation ticks or recorded actions.
+`--headless-tick-rate` requires a headless build or the `--headless` launch flag.
+Unsupported LLM, relay, and verbose flags report errors rather than silently
+accepting a setting this client cannot use.
 
 Replays start at tick zero, playing and looping by default. `--play=false`
 changes the initial playing state; `--at N` chooses another starting tick.
@@ -101,11 +107,13 @@ native screenshots.
 
 ## Generals extensions
 
-`--start` skips the menu. The older bare `--play` remains an alias for
-`--start`; `--play false` has the standard Polyworld pause meaning.
+`--start` skips the menu. `--play true` and `--play false` only choose
+the initial transport state, as in every Polyworld game.
 `--turns N` aliases `--ticks N`, and `--size WxH` aliases `--windowSize WxH`.
 
-The existing `--config`, `--players`, `--name`, `--mmr`, `--player-info`,
-`--assets` and `--at` flags accept split and equals forms.
+The `--config`, `--players`, `--seat-name`, `--seat-bot`, `--mmr`,
+`--player-info`, `--assets` and `--at` flags accept all three value forms.
+Engine JSON still supports full unsigned 64-bit seeds; the common command-line
+`--seed` has the same signed 32-bit range in every game.
 See [BASIC settings](BOTS.md), [maps](MAPS.md), and [replays](REPLAYS.md) for
 their contracts. `--help` lists all supported flags.

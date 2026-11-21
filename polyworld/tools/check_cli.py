@@ -42,7 +42,7 @@ def main():
         assert "Seed 17, 2 players, 8 ticks." in output
         run(executable, [
             "--headless", f"--bot:{bot}:2", "--seed=17", "--ticks=8",
-            "--llm-mode:barrier", f"--record={second}",
+            f"--record:{second}",
         ])
         assert first.read_bytes() == second.read_bytes()
         print("PASS split/compact flags and byte-identical recordings")
@@ -53,7 +53,7 @@ def main():
         print("PASS split/equals replay flags")
 
         run(executable, [
-            "--headless", "--players=2", f"--bot=1:{bot}", f"--bot=2:{bot}",
+            "--headless", "--players=2", f"--seat-bot=1:{bot}", f"--seat-bot=2:{bot}",
             "--seed=17", "--turns=8", f"--record={second}",
         ])
         assert first.read_bytes() == second.read_bytes()
@@ -72,7 +72,7 @@ def main():
         config.write_text(json.dumps({
             "players": [{"name": "Configured"}, {}], "seed": 23, "maxTicks": 99,
         }), encoding="utf-8")
-        output = run(executable, [*base, "--config", config, "--name", "2:Named"])
+        output = run(executable, [*base, "--config", config, "--seat-name", "2:Named"])
         assert "Seed 17, 2 players, 8 ticks." in output
         assert "Configured (MMR ?)" in output and "Named (MMR ?)" in output
         print("PASS engine settings and explicit CLI overrides")
@@ -90,19 +90,17 @@ def main():
         print("PASS headless pacing without replay changes")
 
         for seed in (2**31, 2**32 + 17, 2**63 + 17, 2**64 - 1):
-            output = run(executable, [*base, "--seed", seed, "--record", first])
-            assert f"Seed {seed}, 2 players, 8 ticks." in output
             config.write_text(json.dumps({
                 "players": [{}, {}], "seed": seed, "max_ticks": 8,
             }), encoding="utf-8")
-            run(executable, [
+            output = run(executable, [
                 "--headless", "--bot", f"{bot}:2", "--config", config,
-                "--record", second,
+                "--record", first,
             ])
-            assert first.read_bytes() == second.read_bytes()
+            assert f"Seed {seed}, 2 players, 8 ticks." in output
             output = run(executable, ["--headless", "--replay", first])
             assert "Verified 8 replay ticks in lockstep." in output
-        print("PASS full unsigned 64-bit seeds through CLI, config, and replay")
+        print("PASS full unsigned 64-bit seeds through config and replay")
 
         for flags in [
             ["--player"], ["--player:10"], ["--player", "2"],
@@ -110,13 +108,13 @@ def main():
             ["--replay", first, "--record", second],
             ["--replay", first, "--bot", str(bot)],
             ["--replay", first, "--player"],
-            ["--replay", first, f"--bot=1:{bot}"],
+            ["--replay", first, f"--seat-bot=1:{bot}"],
             ["--bot", f"{bot}:0"], ["--bot", f"{bot}:11"],
             ["--bot", f"{bot}:99999999999999999999999999"],
             ["--bot", f"{bot}:2", "--players", "3"],
-            ["--bot", f"{bot}:2", f"--bot=1:{bot}"],
+            ["--bot", f"{bot}:2", f"--seat-bot=1:{bot}"],
             ["--seconds", "50001"], ["--ticks", "0"],
-            ["--seed", "-1"], ["--seed", "18446744073709551616"],
+            ["--seed", "2147483648"], ["--seed", "18446744073709551616"],
             ["--play=perhaps"], ["--speed", "0"],
             ["--windowSize", "0x400"], ["--vsync", "perhaps"],
             ["--headless-tick-rate", "10001"], ["--llm-mode", "unknown"],

@@ -1,6 +1,6 @@
 import
   std/[os, strutils, times],
-  polyworld/timings,
+  polyworld/[cli, timings],
   generals/[bots, brains, common, events, messages, players, profiles,
     replays, settings, options, worlds]
 
@@ -137,41 +137,26 @@ proc replay(path: string, tickRate: int32) =
 proc usage() =
   ## Prints the shared Polyworld flags and the local game extensions.
   echo "Polyworld Generals"
-  echo "  --player[:SEAT]       Control a human seat, default 1."
-  echo "  --bot PATH[:COUNT]    Add BASIC bots in seat order. Repeatable."
-  echo "  --bot:PATH[:COUNT]    Equivalent compact bot form."
+  echo commonUsageFor(SupportedFlags)
   echo "  --players N          Set the FFA roster size, 2 through 10."
   echo "  --config PATH        Load engine JSON before CLI overrides."
-  echo "  --seed N             Reproduce a map, 0 through 18446744073709551615."
   echo "  --headless           Simulate or verify without a window."
-  echo "  --record PATH        Save a Polyworld action replay."
-  echo "  --replay PATH        Watch or verify a recorded match."
-  echo "  --ticks N            Maximum ticks, default ", DefaultTurns, "."
-  echo "  --seconds N          Duration at two ticks per second."
-  echo "  --minutes N          Duration at 120 ticks per minute."
-  echo "  --play true|false    Start graphical playback playing or paused."
-  echo "  --speed N            Initial graphical speed: 1, 2, 4, or 16."
-  echo "  --windowSize WxH     Set the native window size."
-  echo "  --vsync on|off       Set display synchronization, default on."
-  echo "  --headless-tick-rate N  Wall-clock ticks per second, 0 unlimited."
-  echo "  --llm-mode async|barrier  Shared policy scheduling selection."
-  echo "  --start              Skip the menu; bare --play is also accepted."
-  echo "  --name SEAT:NAME     Set a public player name (seats 1-10)."
+  echo "  --start              Skip the menu and start the configured match."
+  echo "  --seat-name SEAT:NAME  Set another public player name (seats 1-10)."
   echo "  --mmr SEAT:RANK      Set a star rank, or -1 for unknown."
-  echo "  --bot=SEAT:PATH      Legacy assignment to one specific seat."
+  echo "  --seat-bot SEAT:PATH  Assign a BASIC program to one specific seat."
   echo "  --player-info on|off Expose names and MMR to BASIC, default on."
   echo "  --assets PATH        Use another bundled asset directory."
-  echo "  --screenshot PATH    Capture the menu or game, then exit."
-  echo "  --frames N           Render N frames before capture, default 30."
   echo "  --at N               Fast-forward to a match or replay tick."
   echo "  --turns N            Alias for --ticks."
   echo "  --size WxH           Alias for --windowSize."
-  echo "Capture flags accept split, equals, and colon forms."
-  echo "Other flags support split and equals forms, including --replay=PATH."
+  echo "Duration uses two simulation ticks per second, up to 100000 ticks."
+  echo "Generals is silent; --mute and --unmute are accepted."
+  echo "This client has no LLM scheduling or Polyworld relay connection."
 
 proc main() =
   ## Starts a configured local match or standard Polyworld replay session.
-  let parsed =
+  var parsed =
     when defined(coworld):
       hostedOptions()
     else:
@@ -179,6 +164,7 @@ proc main() =
   if parsed.showHelp:
     usage()
     return
+  parsed.game.resolveGamePaths()
   let
     config = parsed.settings.config
     roster =

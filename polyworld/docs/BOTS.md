@@ -4,11 +4,11 @@ Each seat can use a local BASIC policy through the shared Polyworld host.
 Seats without a bot file keep the native policy in headless matches.
 Use Polyworld's `--bot PATH[:COUNT]` groups and `--player[:SEAT]` for normal
 controller setup. See [command-line flags](CLI.md) for roster inference,
-spectator matches, and the preserved per-seat assignment syntax below.
+spectator matches, and the explicit per-seat assignment syntax below.
 
 ```sh
-./out/generals --headless --players=2 --bot=1:examples/scout.bas \
-  --name=1:Scout --mmr=1:37 --name=2:Opponent --record=out/scout.replay
+./out/generals --headless --players=2 --seat-bot=1:examples/scout.bas \
+  --seat-name=1:Scout --mmr=1:37 --seat-name=2:Opponent --record=out/scout.replay
 ```
 
 CLI seats are numbered **1 to 10**. BASIC player IDs and tile indices are
@@ -44,7 +44,8 @@ The config file is limited to 1 MiB. Explicit map dimensions must be 13 to
 61. Omitted dimensions, or a value of `0`, use seeded dimensions based on
 the player count. Changing the seed or player count recalculates these
 automatic dimensions while keeping any explicit dimension. The seed must
-be 0 to 2147483647, and `maxTicks` must be 1 to 100000.
+be 0 to 18446744073709551615, and `maxTicks` must be 1 to 100000.
+The shared `--seed` command-line override uses a signed 32-bit value.
 
 Config bot paths are relative to the config file. CLI bot paths are relative
 to the working directory. Explicit CLI options override config values

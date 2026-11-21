@@ -12,7 +12,7 @@ template rejects(body: untyped) =
       failed = true
     doAssert failed, "Expected a Generals command-line error."
 
-echo "Testing default and legacy command-line options"
+echo "Testing default and game-specific command-line options"
 block:
   let parsed = parseOptions(@[])
   doAssert parsed.settings.config == defaultConfig()
@@ -29,11 +29,12 @@ block:
   doAssert parsed.humanPlayer == (if defined(headless): -1 else: 0)
   doAssert parseOptions(@["--help"]).showHelp
   doAssert parseOptions(@["--config", "/missing/file", "-h"]).showHelp
-  doAssert parseOptions(@["--play"]).startGame
+  when not defined(headless):
+    doAssert not parseOptions(@["--play", "true"]).startGame
   doAssert parseOptions(@["--start"]).startGame
   let legacy = parseOptions(@[
-    "--players=3", "--seed=7", "--turns=100", "--bot=2:bots/scout.bas",
-    "--name=2:Scout", "--mmr=2:37", "--player-info=off"
+    "--players=3", "--seed=7", "--turns=100", "--seat-bot=2:bots/scout.bas",
+    "--seat-name=2:Scout", "--mmr=2:37", "--player-info=off"
   ])
   var config = defaultConfig(7, 3)
   config.maxTurns = 100
@@ -69,6 +70,42 @@ block:
   doAssert split.game.botGroups.len == 1
   doAssert split.game.botGroups[0].path == "123"
   doAssert split.settings.botFiles[2] == absolutePath("123")
+
+echo "Testing common bot aliases have identical path and count semantics"
+for flag in ["--bot", "--bots"]:
+  for flags in [@[flag, "123:3"], @[flag & "=123:3"], @[flag & ":123:3"]]:
+    let parsed = parseOptions(flags)
+    doAssert parsed.settings.config.players == 3
+    doAssert parsed.game.botGroups.len == 1
+    doAssert parsed.game.botGroups[0].path == "123"
+    doAssert parsed.game.botGroups[0].count == 3
+  for flags in [@[flag, "C:\\bots\\scout.bas:2"],
+      @[flag & "=C:\\bots\\scout.bas:2"],
+      @[flag & ":C:\\bots\\scout.bas:2"]]:
+    let parsed = parseOptions(flags)
+    doAssert parsed.game.botGroups[0].path == "C:\\bots\\scout.bas"
+    doAssert parsed.game.botGroups[0].count == 2
+
+echo "Testing common seed range, exact speed, and silent audio options"
+block:
+  for seed in [int32.low, -1'i32, 0'i32, int32.high]:
+    let parsed = parseOptions(@["--seed:" & $seed])
+    doAssert parsed.game.seed == seed
+    doAssert parsed.settings.config.seed == cast[uint64](seed.int64)
+  when not defined(headless):
+    doAssert parseOptions(@["--speed", "3"]).game.speed == 3
+  doAssert parseOptions(@["--mute"]).game.soundMuted
+  doAssert not parseOptions(@["--mute", "false"]).game.soundMuted
+  doAssert not parseOptions(@["--unmute"]).game.soundMuted
+
+when not defined(headless):
+  echo "Testing --name belongs to the selected human seat"
+  for flags in [@["--name", "Scout"], @["--name=Scout"], @["--name:Scout"]]:
+    let parsed = parseOptions(@["--player", "2"] & flags)
+    doAssert parsed.settings.resolvedRoster().displayName(1) == "Scout"
+    doAssert parsed.humanPlayer == 1
+  let named = parseOptions(@["--name", "2:Scout"])
+  doAssert named.settings.resolvedRoster().displayName(0) == "2:Scout"
 
 when not defined(headless):
   echo "Testing every selectable human seat with ordered bot expansion"
@@ -107,43 +144,60 @@ when not defined(headless):
   doAssert parsed.settings.botFiles[0] == absolutePath("bots/first.bas")
   doAssert parsed.settings.botFiles[1].len == 0
   doAssert parsed.settings.botFiles[2] == absolutePath("bots/second.bas")
-  doAssert parseOptions(@["--bot=1:bots/scout.bas"]).humanPlayer == -1
+  doAssert parseOptions(@["--seat-bot=1:bots/scout.bas"]).humanPlayer == -1
 
-echo "Testing Polyworld transport, window, pacing, and boolean forms"
-block:
-  for flags in [
-    @["--play", "false", "--speed", "4", "--windowSize", "800x400",
-      "--vsync", "off", "--headless-tick-rate", "24", "--llm-mode", "barrier"],
-    @["--play=false", "--speed=4", "--windowSize=800X400", "--vsync=off",
-      "--headless-tick-rate=24", "--llm-mode=barrier"],
-    @["--play=false", "--speed=4", "--windowSize:800x400", "--vsync:off",
-      "--headless-tick-rate:24", "--llm-mode:barrier"]
-  ]:
-    let parsed = parseOptions(flags)
-    doAssert parsed.game.pauseOnStart
-    doAssert parsed.game.speed == 4
-    doAssert parsed.game.windowWidth == 800
-    doAssert parsed.game.windowHeight == 400
-    doAssert not parsed.game.vsync
-    doAssert parsed.game.headlessTickRate == 24
-    doAssert parsed.game.waitForLlm
-  for value in ["true", "1", "yes", "on"]:
-    doAssert not parseOptions(@["--play=" & value]).game.pauseOnStart
-  for value in ["false", "0", "no", "off"]:
-    doAssert parseOptions(@["--play=" & value]).game.pauseOnStart
-  let parsed = parseOptions(@["--", "--size", "1024x576", "--llm-mode:async"])
-  doAssert parsed.game.windowWidth == 1024
-  doAssert parsed.game.windowHeight == 576
-  doAssert not parsed.game.waitForLlm
+when not defined(headless):
+  echo "Testing Polyworld transport, window, and boolean forms"
+  block:
+    for flags in [
+      @["--play", "false", "--speed", "4", "--windowSize", "800x400",
+        "--vsync", "off"],
+      @["--play=false", "--speed=4", "--windowSize=800X400", "--vsync=off"],
+      @["--play:false", "--speed:4", "--windowSize:800x400", "--vsync:off"]
+    ]:
+      let parsed = parseOptions(flags)
+      doAssert parsed.game.pauseOnStart
+      doAssert parsed.game.speed == 4
+      doAssert parsed.game.windowWidth == 800
+      doAssert parsed.game.windowHeight == 400
+      doAssert not parsed.game.vsync
+      doAssert parsed.game.headlessTickRate == 0
+      doAssert not parsed.game.waitForLlm
+    for value in ["true", "1", "yes", "on"]:
+      doAssert not parseOptions(@["--play=" & value]).game.pauseOnStart
+    for value in ["false", "0", "no", "off"]:
+      doAssert parseOptions(@["--play=" & value]).game.pauseOnStart
+    let parsed = parseOptions(@["--", "--size", "1024x576"])
+    doAssert parsed.game.windowWidth == 1024
+    doAssert parsed.game.windowHeight == 576
+    doAssert not parsed.game.waitForLlm
+
+echo "Testing headless pacing and unsupported visual controls"
+for flags in [@["--headless-tick-rate", "24"],
+    @["--headless-tick-rate=24"], @["--headless-tick-rate:24"]]:
+  doAssert parseOptions(@["--headless"] & flags).game.headlessTickRate == 24
+  when not defined(headless):
+    rejects:
+      discard parseOptions(flags)
+when not defined(headless):
+  rejects:
+    discard parseOptions(@["--headless-tick-rate", "0"])
+for flags in [@["--play", "false"], @["--speed=3"],
+    @["--windowSize:800x600"], @["--vsync", "false"], @["--frames", "3"]]:
+  rejects:
+    discard parseOptions(@["--headless"] & flags)
 
 echo "Testing durations follow the native half-second tick"
 for (flags, expected) in {
   @["--seconds", "60"]: 120,
   @["--seconds=60"]: 120,
+  @["--seconds:60"]: 120,
   @["--minutes", "3"]: 360,
   @["--minutes=3"]: 360,
+  @["--minutes:3"]: 360,
   @["--ticks", "481"]: 481,
   @["--ticks=481"]: 481,
+  @["--ticks:481"]: 481,
   @["--turns", "99"]: 99,
   @["--minutes", "3", "--ticks=7"]: 7,
   @["--ticks=7", "--seconds", "3"]: 6
@@ -156,7 +210,7 @@ for (flags, expected) in {
 echo "Testing replay and retained asset capture aliases"
 block:
   for flags in [@["--replay", "out/match.replay"],
-    @["--replay=out/match.replay"]]:
+    @["--replay=out/match.replay"], @["--replay:out/match.replay"]]:
       let parsed = parseOptions(flags)
       doAssert parsed.game.replayPath == "out/match.replay"
       doAssert parsed.startGame
@@ -221,19 +275,27 @@ block:
     discard parseOptions(@["--config", path, "--bot:new.bas:2"])
   rejects:
     discard parseOptions(@["--config", path, "--replay", "out/match.replay"])
+  writeFile(path, """{"players":[{},{}],"seed":18446744073709551615}""")
+  doAssert parseOptions(@["--config", path]).settings.config.seed == uint64.high
 
 echo "Testing invalid controller combinations and bounded expansion"
 for flags in [
   @["--headless", "--player"],
+  @["--headless", "--name", "Scout"],
+  @["--bot", "bots/scout.bas:2", "--name", "Scout"],
+  @["--replay", "out/match.replay", "--name", "Scout"],
   @["--headless", "--screenshot=out/game.png"],
   @["--replay=out/match.replay", "--record=out/again.replay"],
   @["--replay=out/match.replay", "--bot:bots/scout.bas:2"],
-  @["--replay=out/match.replay", "--bot=2:bots/scout.bas"],
+  @["--replay=out/match.replay", "--seat-bot=2:bots/scout.bas"],
   @["--replay=out/match.replay", "--player"],
+  @["--replay=out/match.replay", "--seed", "3"],
+  @["--replay=out/match.replay", "--seconds", "3"],
+  @["--replay=out/match.replay", "--ticks", "3"],
   @["--player=11"],
   @["--players=4", "--player=5"],
-  @["--player", "--bot=1:bots/scout.bas"],
-  @["--bot:bots/scout.bas:2", "--bot=2:bots/other.bas"],
+  @["--player", "--seat-bot=1:bots/scout.bas"],
+  @["--bot:bots/scout.bas:2", "--seat-bot=2:bots/other.bas"],
   @["--bot:bots/scout.bas"],
   @["--players=4", "--bot:bots/scout.bas:2"],
   @["--bot:bots/scout.bas:10", "--bot:bots/other.bas"],
@@ -242,11 +304,11 @@ for flags in [
   @["--bot:bots/scout.bas:11"],
   @["--bot:bots/scout.bas:999999999999999999999999999999999999999"],
   @["--bot::2"],
-  @["--seed=-1"],
+  @["--seed=2147483648"],
+  @["--seed=-2147483649"],
   @["--seconds=50001"],
   @["--minutes=1000"],
   @["--ticks=0"],
-  @["--speed=3"],
   @["--speed=0"],
   @["--speed=2147483648"],
   @["--player", "--player:2"],
@@ -257,8 +319,13 @@ for flags in [
   @["--windowSize=800x400x200"],
   @["--headless-tick-rate=-1"],
   @["--llm-mode=invalid"],
+  @["--llm-mode=async"],
+  @["--llm-mode=barrier"],
+  @["--server=ws://localhost:9911/ws"],
+  @["--room=ABCDEF"],
+  @["--verbose"],
   @["--windowSize=8000x400"],
-  @["--name", "5:Outside"],
+  @["--seat-name", "5:Outside"],
   @["--bot"],
   @["--replay", "--seed", "7"],
   @["--screenshot="],
