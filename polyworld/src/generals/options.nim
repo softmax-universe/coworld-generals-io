@@ -8,7 +8,7 @@ export cli.GameOptions
 type Options* = object
   settings*: Settings
   game*: GameOptions
-  assets*, screenshot*: string
+  assets*: string
   autoTurns*: int
   headless*, startGame*, showHelp*: bool
   humanPlayer*: int
@@ -48,8 +48,8 @@ proc canonicalArguments(arguments: seq[string]): seq[string] =
     case argument
     of "--config", "--seed", "--players", "--turns", "--ticks",
       "--seconds", "--minutes", "--name", "--mmr", "--bot", "--player-info",
-      "--at", "--assets", "--record", "--replay", "--screenshot", "--size",
-      "--windowSize", "--vsync", "--speed", "--headless-tick-rate",
+      "--at", "--assets", "--record", "--replay", "--screenshot", "--frames",
+      "--size", "--windowSize", "--vsync", "--speed", "--headless-tick-rate",
       "--llm-mode":
         let value = arguments.argumentValue(index)
         if argument == "--bot":
@@ -100,6 +100,11 @@ proc commonFlag(options: var GameOptions, argument: string): bool =
     separator = argument.find({':', '='})
     name = if separator < 0: argument else: argument[0 ..< separator]
     value = if separator < 0: "" else: argument[separator + 1 .. ^1]
+  try:
+    if options.capture.takeCaptureFlag(arguments, index, argument):
+      return true
+  except ScreenshotError as error:
+    failOption(error.msg)
   case name
   of "--player":
     if options.playerSlot != 0:
@@ -174,8 +179,12 @@ proc resolve(options: var Options, explicitCount, seatBots: bool) =
     failOption("--player must be between 1 and " & $count & ".")
   if options.headless and options.game.playerSlot > 0:
     failOption("--player requires the graphical client.")
-  if options.headless and options.screenshot.len > 0:
-    failOption("--screenshot requires the graphical client.")
+  try:
+    options.game.capture.validateCapture(
+      graphical = not options.headless and not defined(emscripten)
+    )
+  except ScreenshotError as error:
+    failOption(error.msg)
   options.humanPlayer =
     if options.game.playerSlot > 0:
       options.game.playerSlot.int - 1
@@ -267,10 +276,6 @@ proc parseOptions*(arguments: seq[string]): Options =
       result.assets = argument[9 .. ^1]
       if result.assets.len == 0:
         failOption("--assets requires a path.")
-    elif argument.startsWith("--screenshot="):
-      result.screenshot = argument[13 .. ^1]
-      if result.screenshot.len == 0:
-        failOption("--screenshot requires a path.")
     elif argument.startsWith("--size="):
       discard result.game.commonFlag("--windowSize=" & argument[7 .. ^1])
     else:

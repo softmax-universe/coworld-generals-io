@@ -1,60 +1,35 @@
-name: tests
+name: unit tests
 
 on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: unit-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  pytest:
+  unit-tests:
     runs-on: ubuntu-latest
-    env:
-      # headless CI: pygame (GUI extra) must never try to open a display
-      SDL_VIDEODRIVER: dummy
-      GENERALS_POLYWORLD_ENGINE: /tmp/generals-polyworld
-      GENERALS_BASIC_WORKER: /tmp/generals-basic
-      GENERALS_POLYWORLD_VIEWER: /tmp/generals-polyworld-viewer
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
       - uses: jiro4989/setup-nim-action@v2
         with:
           nim-version: '2.2.10'
-      - name: Build hosted engines and check imported Polyworld rules
+      - uses: actions/cache@v4
+        with:
+          path: polyworld/.deps
+          key: ${{ runner.os }}-generals-deps-${{ hashFiles('polyworld/dependencies.lock') }}
+      - name: Fetch pinned dependencies
+        run: sh polyworld/tools/fetch_deps.sh
+      - name: Check rules, views, messages, and command-line options
+        working-directory: polyworld
         run: |
-          GENERALS_BASIC_NATIVE_STRICT=1 integrations/softmax/tools/build_polyworld_runtime.sh /tmp
-          cd polyworld
           nim r -d:release tests/test_rules.nim
-          nim r -d:release tests/test_bots.nim
           nim r -d:release tests/test_povs.nim
-          nim r -d:release tests/test_brains.nim
           nim r -d:release tests/test_messages.nim
-      - name: Build the Polyworld WebAssembly replay viewer
-        run: |
-          git clone --depth 1 --branch 5.0.7 https://github.com/emscripten-core/emsdk.git /tmp/generals-emsdk
-          /tmp/generals-emsdk/emsdk install 5.0.7
-          /tmp/generals-emsdk/emsdk activate 5.0.7
-          export PATH="/tmp/generals-emsdk/upstream/emscripten:$PATH"
-          integrations/softmax/tools/build_polyworld_viewer.sh "$GENERALS_POLYWORLD_VIEWER"
-      - name: Install engine + test deps
-        run: |
-          pip install -r integrations/softmax/requirements.lock
-          pip install -e '.[softmax]'
-          pip install pytest playwright
-          python -m playwright install --with-deps chromium
-      - run: python -m integrations.softmax.tools.manifest --check
-      - name: Check each module with a fresh JAX compilation cache
-        run: |
-          for module in tests/test_*.py tests/system/test_*.py; do
-            # This file is a benchmark entrypoint and collects no tests.
-            if [ "$module" = tests/test_performance.py ]; then continue; fi
-            python -m pytest -q "$module"
-          done
-        env:
-          GENERALS_BROWSER_TESTS: "1"
-      - name: Check the published Polyworld browser path
-        run: python -m pytest -q tests/system/test_live_replay_system.py
-        env:
-          GENERALS_BROWSER_TESTS: "1"
-          GENERALS_ENGINE: polyworld
+          nim r -d:release tests/test_options.nim

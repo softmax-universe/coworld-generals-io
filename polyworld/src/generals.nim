@@ -162,10 +162,12 @@ proc usage() =
   echo "  --player-info on|off Expose names and MMR to BASIC, default on."
   echo "  --assets PATH        Use another bundled asset directory."
   echo "  --screenshot PATH    Capture the menu or game, then exit."
+  echo "  --frames N           Render N frames before capture, default 30."
   echo "  --at N               Fast-forward to a match or replay tick."
   echo "  --turns N            Alias for --ticks."
   echo "  --size WxH           Alias for --windowSize."
-  echo "Split and equals forms are supported, including --replay=PATH."
+  echo "Capture flags accept split, equals, and colon forms."
+  echo "Other flags support split and equals forms, including --replay=PATH."
 
 proc main() =
   ## Starts a configured local match or standard Polyworld replay session.
@@ -207,7 +209,7 @@ proc main() =
       runGraphics(
         config,
         assets,
-        parsed.screenshot,
+        parsed.game.capture,
         parsed.autoTurns,
         parsed.startGame,
         ivec2(parsed.game.windowWidth, parsed.game.windowHeight),

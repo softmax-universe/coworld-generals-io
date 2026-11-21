@@ -67,6 +67,8 @@ assignments while keeping supplied names and MMR values.
 | `--play true\|false` | Start graphical simulation or replay playing or paused. |
 | `--speed N` | Initial graphical speed: 1, 2, 4, or 16. |
 | `--windowSize WxH` | Set the native window dimensions. |
+| `--screenshot PATH` | Save a native PNG screenshot and exit. |
+| `--frames N` | Render N frames before capture, default 30. |
 | `--vsync on\|off` | Enable or disable display synchronization. |
 | `--headless-tick-rate N` | Pace headless simulation or playback at N ticks per second; 0 is unlimited. |
 | `--llm-mode async\|barrier` | Shared scheduling selection. Both are equivalent for the current synchronous BASIC policies. |
@@ -82,6 +84,21 @@ changes the initial playing state; `--at N` chooses another starting tick.
 Replay playback cannot be combined with bot controllers, a human player,
 or recording.
 
+Capture uses the normal desktop executable and does not require a special
+build. It renders in a hidden window without display pacing, creates the
+output directory when needed, and exits after writing the PNG. Capture,
+frame count, and window size accept split, equals, and colon forms:
+
+```sh
+./out/generals --screenshot out/menu.png --frames 30 --windowSize 1280x900
+./out/generals --start --at 200 --screenshot=out/game.png --frames=1
+```
+
+Screenshots keep the requested menu, game, or replay tick still while the
+frames render. `--at` selects a game or replay tick before capture. Capturing
+does not enable replay recording. Headless and browser builds cannot capture
+native screenshots.
+
 ## Generals extensions
 
 `--start` skips the menu. The older bare `--play` remains an alias for
@@ -89,6 +106,6 @@ or recording.
 `--turns N` aliases `--ticks N`, and `--size WxH` aliases `--windowSize WxH`.
 
 The existing `--config`, `--players`, `--name`, `--mmr`, `--player-info`,
-`--assets`, `--screenshot`, and `--at` flags accept split and equals forms.
+`--assets` and `--at` flags accept split and equals forms.
 See [BASIC settings](BOTS.md), [maps](MAPS.md), and [replays](REPLAYS.md) for
 their contracts. `--help` lists all supported flags.

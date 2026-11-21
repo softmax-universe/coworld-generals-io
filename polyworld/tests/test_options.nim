@@ -23,6 +23,8 @@ block:
   doAssert parsed.game.vsync
   doAssert parsed.game.windowWidth == 1280
   doAssert parsed.game.windowHeight == 900
+  doAssert parsed.game.capture.path.len == 0
+  doAssert parsed.game.capture.frames == 30
   doAssert not parsed.startGame
   doAssert parsed.humanPlayer == (if defined(headless): -1 else: 0)
   doAssert parseOptions(@["--help"]).showHelp
@@ -170,8 +172,30 @@ block:
       "--at", "200", "--size", "1024x576"
     ])
     doAssert capture.assets == "assets"
-    doAssert capture.screenshot == "out/game.png"
+    doAssert capture.game.capture.path == "out/game.png"
+    doAssert capture.game.capture.frames == 30
     doAssert capture.autoTurns == 200
+
+when not defined(headless) and not defined(emscripten):
+  echo "Testing shared screenshot options without opening a window"
+  for flags in [
+    @["--screenshot", "out/first frame.png", "--frames", "1",
+      "--windowSize", "640x360"],
+    @["--screenshot=out/first frame.png", "--frames=1",
+      "--windowSize=640x360"],
+    @["--screenshot:out/first frame.png", "--frames:1",
+      "--windowSize:640x360"]
+  ]:
+    let parsed = parseOptions(flags)
+    doAssert parsed.game.capture.path == "out/first frame.png"
+    doAssert parsed.game.capture.frames == 1
+    doAssert parsed.game.capture.framesSpecified
+    doAssert parsed.game.windowWidth == 640
+    doAssert parsed.game.windowHeight == 360
+    doAssert not parsed.startGame
+    doAssert parsed.game.recordPath.len == 0
+  let windowsPath = parseOptions(@["--screenshot:C:\\captures\\frame.png"])
+  doAssert windowsPath.game.capture.path == "C:\\captures\\frame.png"
 
 echo "Testing config precedence and explicit roster counts"
 block:
@@ -238,6 +262,15 @@ for flags in [
   @["--bot"],
   @["--replay", "--seed", "7"],
   @["--screenshot="],
+  @["--screenshot"],
+  @["--screenshot:"],
+  @["--screenshot", "--frames", "1"],
+  @["--frames=0"],
+  @["--frames:-1"],
+  @["--frames=invalid"],
+  @["--frames=2147483648"],
+  @["--frames="],
+  @["--frames"],
   @["--assets="],
   @["--replay="],
   @["--unknown"]

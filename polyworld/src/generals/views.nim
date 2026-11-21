@@ -87,7 +87,8 @@ type
     frames: int
     elapsed: float64
     lastFrame: MonoTime
-    screenshot: string
+    screenshotFrame: int
+    screenshotTarget: ScreenshotTarget
 
 proc label(
     view: View,
@@ -1574,22 +1575,6 @@ proc handleInput(view: View) =
         elif not view.controls.enqueue(view.world, target, half):
           view.controls.select(view.world, target)
 
-proc capture(view: View) =
-  ## Saves the rendered back buffer while preserving normal window cleanup.
-  let image = newImage(view.window.size.x, view.window.size.y)
-  glReadPixels(
-    0,
-    0,
-    image.width.GLsizei,
-    image.height.GLsizei,
-    GL_RGBA,
-    GL_UNSIGNED_BYTE,
-    image.data[0].addr
-  )
-  image.flipVertical()
-  image.writeFile(view.screenshot)
-  view.closing = true
-
 proc frame(view: View) =
   ## Advances bounded simulation time and draws one complete local frame.
   when defined(softmaxReplay):
@@ -1599,15 +1584,16 @@ proc frame(view: View) =
     now = getMonoTime()
     elapsed = min(0.25, (now - view.lastFrame).inNanoseconds.float64 / 1e9)
   view.lastFrame = now
+  discard view.screenshotTarget.beginScreenshotFrame(view.window)
   view.layout()
   view.sk.beginUi(view.window, view.window.size)
   view.handleInput()
   gameProfiles.profileBlock "game frame":
     if view.screen == GameScreen and view.replaying:
-      if view.screenshot.len == 0:
+      if not captureActive():
         view.playReplay(elapsed)
     elif view.screen == GameScreen and not view.remote and not view.paused and
-      not view.world.finished and view.screenshot.len == 0:
+      not view.world.finished and not captureActive():
         view.elapsed += elapsed * view.initialSpeed.float64
         while view.elapsed >= TickSeconds:
           view.advance()
@@ -1675,9 +1661,10 @@ proc frame(view: View) =
   inc view.frames
   if gameProfiles.profileShouldDump(view.frames):
     gameProfiles.finishProfileTrace()
-  if view.screenshot.len > 0 and view.frames >= 3:
-    view.capture()
-  view.window.swapBuffers()
+  if view.window.captureFrame(view.screenshotFrame):
+    view.closing = true
+  if not captureActive():
+    view.window.swapBuffers()
   when defined(softmaxReplay) and defined(emscripten):
     let
       zoom = view.zoom
@@ -1738,7 +1725,7 @@ when defined(softmaxReplay) and defined(emscripten):
 proc runWindow(
     config: Config,
     assets: string,
-    screenshot = "",
+    capture = ScreenshotOptions(),
     autoTurns = 0,
     startGame = false,
     windowSize = ivec2(1280, 900),
@@ -1755,12 +1742,13 @@ proc runWindow(
     remote = false
 ) =
   ## Runs local games, hosted human seats and recordings with the shared theme.
+  capture.configureCapture()
   let
     window = newWindow(
       "Polyworld Generals",
       windowSize,
-      visible = true,
-      vsync = vsync
+      visible = not captureActive(),
+      vsync = vsync and not captureActive()
     )
   defer:
     gameProfiles.finishProfileTrace()
@@ -1822,13 +1810,13 @@ proc runWindow(
     initialSpeed: initialSpeed,
     configuredRoster: roster,
     botFiles: botFiles,
-    screenshot: screenshot,
     recordPath: recordPath,
     lastFrame: getMonoTime(),
     remote: remote
   )
   view.sk.applyTheme()
   defer:
+    view.screenshotTarget.releaseScreenshotTarget()
     if recordPath.len > 0 and view.recording != nil:
       saveReplay(recordPath, view.recording.data)
   if replayPath.len > 0:
@@ -1853,12 +1841,13 @@ proc runWindow(
     view.frame()
   while not window.closeRequested and not view.closing:
     pollEvents()
-    waitForDisplay()
+    if not captureActive():
+      waitForDisplay()
 
 proc runGraphics*(
     config: Config,
     assets: string,
-    screenshot = "",
+    capture = ScreenshotOptions(),
     autoTurns = 0,
     startGame = false,
     windowSize = ivec2(1280, 900),
@@ -1879,7 +1868,7 @@ proc runGraphics*(
     runWindow(
       config,
       assets,
-      screenshot,
+      capture,
       autoTurns,
       startGame,
       windowSize,
@@ -1895,7 +1884,7 @@ proc runGraphics*(
       vsync,
       remote
     )
-  except IOError, OSError, PixieError, SilkyError,
+  except IOError, OSError, PixieError, SilkyError, ScreenshotError,
     SilkyAtlasError, WindyError:
       raise newException(
         GeneralsError,
